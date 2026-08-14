@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://institutional-trading.local/schemas/order-intent.schema.json",
+  "title": "OrderIntent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "intent_id", "client_order_id", "idempotency_key", "environment",
+    "account_ref", "strategy_id", "strategy_version", "symbol", "side",
+    "quantity", "order_type", "signal_ref", "state", "created_at"
+  ],
+  "properties": {
+    "intent_id": {"type": "string", "format": "uuid"},
+    "client_order_id": {"type": "string", "minLength": 8, "maxLength": 128},
+    "idempotency_key": {"type": "string", "minLength": 16, "maxLength": 256},
+    "environment": {"enum": ["PAPER", "TESTNET", "PROD"]},
+    "account_ref": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "symbol": {"type": "string", "minLength": 1, "maxLength": 32},
+    "side": {"enum": ["BUY", "SELL"]},
+    "quantity": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "order_type": {"enum": ["MARKET", "LIMIT", "STOP", "STOP_LIMIT"]},
+    "limit_price": {"type": ["string", "null"]},
+    "signal_ref": {"type": "string", "minLength": 1},
+    "approval_ref": {"type": ["string", "null"]},
+    "policy_decision_ref": {"type": ["string", "null"]},
+    "risk_decision_ref": {"type": ["string", "null"]},
+    "state": {"enum": ["CREATED", "POLICY_APPROVED", "RISK_APPROVED", "SUBMITTING", "ACKNOWLEDGED", "PARTIALLY_FILLED", "FILLED", "CANCELLED", "REJECTED", "UNKNOWN", "SUSPENDED"]},
+    "created_at": {"type": "string", "format": "date-time"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"environment": {"const": "PROD"}}},
+      "then": {"required": ["approval_ref"], "properties": {"approval_ref": {"type": "string", "minLength": 1}}}
+    }
+  ]
+}
