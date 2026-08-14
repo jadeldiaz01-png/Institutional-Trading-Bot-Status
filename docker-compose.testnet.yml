@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:18.0
+    environment:
+      POSTGRES_DB: trading_testnet
+      POSTGRES_USER: trading_runtime
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading_runtime -d trading_testnet"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pg_testnet:/var/lib/postgresql/data
+    networks: [testnet_control]
+
+  opa:
+    image: openpolicyagent/opa:1.7.1-static
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policy/order_intent.rego"]
+    read_only: true
+    volumes:
+      - ./policy:/policy:ro
+    healthcheck:
+      test: ["CMD", "/opa", "eval", "1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [testnet_control]
+
+  openbao:
+    image: ghcr.io/openbao/openbao:2.6.1
+    cap_drop: ["ALL"]
+    cap_add: ["IPC_LOCK"]
+    command: ["server", "-config=/openbao/config/openbao.hcl"]
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+    volumes:
+      - ./infra/openbao/config:/openbao/config:ro
+      - bao_testnet:/openbao/file
+    networks: [testnet_control]
+
+networks:
+  testnet_control:
+    internal: true
+
+volumes:
+  pg_testnet: {}
+  bao_testnet: {}
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:?set POSTGRES_PASSWORD_FILE outside Git}
