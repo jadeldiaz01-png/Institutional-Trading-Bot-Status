@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "institutional-trading-bot-status"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.9,<3",
+  "httpx>=0.28,<1",
+  "psycopg[binary]>=3.2,<4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3,<9", "hypothesis>=6.112,<7"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+testpaths = ["tests"]
+markers = [
+  "integration: requires local TESTNET infrastructure",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
