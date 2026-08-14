@@ -17,7 +17,7 @@ services:
     networks: [testnet_control]
 
   opa:
-    image: openpolicyagent/opa:1.7.1-static
+    image: openpolicyagent/opa:1.17.0-static
     command: ["run", "--server", "--addr=0.0.0.0:8181", "/policy/order_intent.rego"]
     read_only: true
     volumes:
