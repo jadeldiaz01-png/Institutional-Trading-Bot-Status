@@ -47,12 +47,56 @@ def canonical_sha256(obj: object) -> str:
     return _sha256_bytes(raw)
 
 
-def list_binance_vision_keys(prefix: str = MONTHLY_PREFIX, *, max_pages: int | None = None, timeout: int = 60) -> list[str]:
-    """List Binance Vision objects using the public S3 ListObjectsV2 API.
+def _list_page(params: dict[str, str], timeout: int) -> ET.Element:
+    url = f"{S3_LIST_URL}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-evidence/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return ET.fromstring(response.read())
 
-    The result is evidence discovery only. Presence/absence of an archive must not
-    be treated by itself as an exact listing or delisting timestamp.
+
+def _ns(root: ET.Element) -> dict[str, str]:
+    return {"s3": root.tag.split("}")[0].strip("{")} if "}" in root.tag else {}
+
+
+def list_common_prefixes(prefix: str, *, timeout: int = 60) -> list[str]:
+    """List immediate child prefixes using S3 delimiter pagination."""
+    token: str | None = None
+    prefixes: list[str] = []
+    while True:
+        params = {"list-type": "2", "prefix": prefix, "delimiter": "/", "max-keys": "1000"}
+        if token:
+            params["continuation-token"] = token
+        root = _list_page(params, timeout)
+        ns = _ns(root)
+        path = "s3:CommonPrefixes/s3:Prefix" if ns else "CommonPrefixes/Prefix"
+        prefixes.extend(node.text for node in root.findall(path, ns) if node.text)
+        truncated_path = "s3:IsTruncated" if ns else "IsTruncated"
+        if root.findtext(truncated_path, default="false", namespaces=ns).lower() != "true":
+            break
+        token_path = "s3:NextContinuationToken" if ns else "NextContinuationToken"
+        token = root.findtext(token_path, namespaces=ns)
+        if not token:
+            raise RuntimeError("Binance Vision prefix pagination truncated without token")
+    return sorted(set(prefixes))
+
+
+def discover_historical_usdt_symbols(*, timeout: int = 60) -> list[str]:
+    """Enumerate historical Spot symbols represented in Binance Vision.
+
+    Current exchangeInfo is deliberately not used because it omits delisted
+    markets and would introduce survivorship bias into the research universe.
     """
+    prefixes = list_common_prefixes(MONTHLY_PREFIX, timeout=timeout)
+    symbols = []
+    for prefix in prefixes:
+        symbol = prefix.rstrip("/").split("/")[-1]
+        if symbol.endswith("USDT") and re.fullmatch(r"[A-Z0-9]+", symbol):
+            symbols.append(symbol)
+    return sorted(set(symbols))
+
+
+def list_binance_vision_keys(prefix: str, *, max_pages: int | None = None, timeout: int = 60) -> list[str]:
+    """List Binance Vision objects using the public S3 ListObjectsV2 API."""
     token: str | None = None
     keys: list[str] = []
     page = 0
@@ -60,16 +104,10 @@ def list_binance_vision_keys(prefix: str = MONTHLY_PREFIX, *, max_pages: int | N
         params = {"list-type": "2", "prefix": prefix, "max-keys": "1000"}
         if token:
             params["continuation-token"] = token
-        url = f"{S3_LIST_URL}?{urllib.parse.urlencode(params)}"
-        req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-evidence/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            payload = response.read()
-        root = ET.fromstring(payload)
-        ns = {"s3": root.tag.split("}")[0].strip("{")} if "}" in root.tag else {}
+        root = _list_page(params, timeout)
+        ns = _ns(root)
         key_path = "s3:Contents/s3:Key" if ns else "Contents/Key"
-        for node in root.findall(key_path, ns):
-            if node.text:
-                keys.append(node.text)
+        keys.extend(node.text for node in root.findall(key_path, ns) if node.text)
         page += 1
         truncated_path = "s3:IsTruncated" if ns else "IsTruncated"
         truncated = root.findtext(truncated_path, default="false", namespaces=ns).lower() == "true"
@@ -80,6 +118,16 @@ def list_binance_vision_keys(prefix: str = MONTHLY_PREFIX, *, max_pages: int | N
         if not token:
             raise RuntimeError("Binance Vision pagination truncated without continuation token")
     return keys
+
+
+def acquire_usdt_daily_keys(*, timeout: int = 60) -> tuple[list[str], list[str]]:
+    """Enumerate all historical USDT symbols, then fetch only their 1d archives."""
+    symbols = discover_historical_usdt_symbols(timeout=timeout)
+    keys: list[str] = []
+    for symbol in symbols:
+        prefix = f"{MONTHLY_PREFIX}{symbol}/1d/"
+        keys.extend(list_binance_vision_keys(prefix, timeout=timeout))
+    return symbols, sorted(set(keys))
 
 
 def extract_usdt_daily_observations(keys: list[str]) -> list[ArchiveObservation]:
@@ -122,24 +170,28 @@ def lifecycle_candidates(observations: list[ArchiveObservation]) -> list[Lifecyc
     return result
 
 
-def build_provenance(observations: list[ArchiveObservation], candidates: list[LifecycleCandidate]) -> dict:
+def build_provenance(observations: list[ArchiveObservation], candidates: list[LifecycleCandidate], *, discovered_symbols: list[str] | None = None) -> dict:
     obs_payload = [asdict(x) for x in observations]
     candidate_payload = [asdict(x) for x in candidates]
+    discovered_symbols = sorted(set(discovered_symbols or [x.symbol for x in candidates]))
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "dataset_id": "binance-spot-usdt-lifecycle-evidence-v1",
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
         "source": VISION_BASE,
-        "source_method": "public_s3_listobjects_v2",
+        "source_method": "public_s3_listobjects_v2_delimiter_then_symbol_1d",
         "interval": "1d",
         "quote_asset": "USDT",
+        "discovered_symbol_count": len(discovered_symbols),
+        "discovered_symbols_sha256": canonical_sha256(discovered_symbols),
         "observation_count": len(obs_payload),
-        "symbol_count": len(candidate_payload),
+        "symbol_count_with_1d_monthly_archives": len(candidate_payload),
         "observations_sha256": canonical_sha256(obs_payload),
         "candidates_sha256": canonical_sha256(candidate_payload),
         "verification_policy": {
             "archive_presence_is_exact_listing_time": False,
             "archive_absence_is_exact_delisting_time": False,
+            "current_exchange_info_can_define_historical_universe": False,
             "requires_boundary_kline_verification": True,
             "requires_gap_check": True,
             "requires_official_announcement_when_available": True,
@@ -158,7 +210,7 @@ def validate_verified_lifecycle(rows: pd.DataFrame) -> list[str]:
     if missing:
         return [f"MISSING_COLUMNS:{','.join(sorted(missing))}"]
     reasons: list[str] = []
-    for i, row in rows.iterrows():
+    for _, row in rows.iterrows():
         symbol = str(row["symbol"])
         if row["listing_status"] != "VERIFIED":
             reasons.append(f"{symbol}:LISTING_BOUNDARY_UNVERIFIED")
@@ -178,12 +230,21 @@ def validate_verified_lifecycle(rows: pd.DataFrame) -> list[str]:
     return sorted(set(reasons))
 
 
-def write_discovery_bundle(output_dir: str | Path, keys: list[str]) -> dict:
+def verified_lifecycle_sha256(rows: pd.DataFrame) -> str:
+    canonical = rows.fillna("").sort_values("symbol").to_dict(orient="records")
+    return canonical_sha256(canonical)
+
+
+def write_discovery_bundle(output_dir: str | Path, keys: list[str], *, discovered_symbols: list[str] | None = None) -> dict:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     observations = extract_usdt_daily_observations(keys)
     candidates = lifecycle_candidates(observations)
-    provenance = build_provenance(observations, candidates)
+    provenance = build_provenance(observations, candidates, discovered_symbols=discovered_symbols)
+    if discovered_symbols is not None:
+        (out / "historical-usdt-symbols.json").write_text(
+            json.dumps(sorted(set(discovered_symbols)), indent=2), encoding="utf-8"
+        )
     (out / "archive-observations.json").write_text(
         json.dumps([asdict(x) for x in observations], indent=2, sort_keys=True), encoding="utf-8"
     )
