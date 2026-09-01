@@ -32,6 +32,7 @@ validation:
   test_days: 180
   step_days: 90
   embargo_days: 7
+  holdout_days: 365
   bootstrap_samples: 2000
   monte_carlo_paths: 2000
   min_trades: 100
