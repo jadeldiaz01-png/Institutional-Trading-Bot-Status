@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from ar_tf.binance_download import _overlaps
+from ar_tf.ingestion import SymbolLifecycle
 from ar_tf.tournament import TournamentGate, TrialSpec, evaluate_trial, select_candidate
 
 
@@ -77,3 +79,22 @@ def test_stress_timestamp_mismatch_is_rejected():
         assert "same OOS timestamps" in str(exc)
     else:
         raise AssertionError("timestamp mismatch must fail closed")
+
+
+def test_mid_month_listing_overlaps_month_download_window():
+    lifecycle = SymbolLifecycle("NEWUSDT", pd.Timestamp("2024-01-15", tz="UTC"))
+    jan_start = pd.Timestamp("2024-01-01", tz="UTC")
+    feb_start = pd.Timestamp("2024-02-01", tz="UTC")
+    assert _overlaps(lifecycle, jan_start, feb_start)
+
+
+def test_mid_month_delisting_overlaps_until_delist():
+    lifecycle = SymbolLifecycle(
+        "OLDUSDT",
+        pd.Timestamp("2020-01-01", tz="UTC"),
+        pd.Timestamp("2024-01-15", tz="UTC"),
+    )
+    jan_start = pd.Timestamp("2024-01-01", tz="UTC")
+    feb_start = pd.Timestamp("2024-02-01", tz="UTC")
+    assert _overlaps(lifecycle, jan_start, feb_start)
+    assert not _overlaps(lifecycle, feb_start, pd.Timestamp("2024-03-01", tz="UTC"))
