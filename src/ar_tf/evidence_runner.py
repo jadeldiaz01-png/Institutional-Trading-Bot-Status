@@ -7,14 +7,14 @@ from pathlib import Path
 import pandas as pd
 
 from .evidence_acquisition import (
-    acquire_usdt_daily_keys,
     extract_usdt_daily_observations,
     lifecycle_candidates,
     validate_verified_lifecycle,
     verified_lifecycle_sha256,
     write_discovery_bundle,
 )
-from .lifecycle_verifier import verify_candidates, write_verified_lifecycle
+from .evidence_parallel import acquire_usdt_daily_keys_parallel, verify_candidates_parallel
+from .lifecycle_verifier import write_verified_lifecycle
 
 
 def main() -> None:
@@ -22,10 +22,11 @@ def main() -> None:
     p.add_argument("--output-dir", default="artifacts/ar_tf_v1d2")
     p.add_argument("--verified-lifecycle", default=None)
     p.add_argument("--timeout", type=int, default=60)
+    p.add_argument("--workers", type=int, default=16)
     p.add_argument("--skip-boundary-verification", action="store_true")
     args = p.parse_args()
 
-    symbols, keys = acquire_usdt_daily_keys(timeout=args.timeout)
+    symbols, keys = acquire_usdt_daily_keys_parallel(timeout=args.timeout, workers=args.workers)
     provenance = write_discovery_bundle(args.output_dir, keys, discovered_symbols=symbols)
 
     result = {
@@ -45,7 +46,9 @@ def main() -> None:
         months_by_symbol: dict[str, list[str]] = {}
         for obs in observations:
             months_by_symbol.setdefault(obs.symbol, []).append(obs.month)
-        verified, rejected = verify_candidates(candidates, months_by_symbol, timeout=args.timeout)
+        verified, rejected = verify_candidates_parallel(
+            candidates, months_by_symbol, timeout=args.timeout, workers=args.workers
+        )
         summary = write_verified_lifecycle(verified, rejected, args.output_dir)
         result["boundary_verification"] = summary
         lifecycle_path = str(Path(args.output_dir) / "verified-lifecycle.csv")
