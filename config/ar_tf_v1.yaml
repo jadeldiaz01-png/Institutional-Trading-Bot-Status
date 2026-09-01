@@ -1,0 +1,45 @@
+strategy_id: AR-TF-v1
+stage: RESEARCH
+live_trading_enabled: false
+universe:
+  quote_asset: USDT
+  max_assets: 15
+  min_history_days: 540
+  min_median_daily_notional_usd: 10000000
+  exclude_patterns: [UPUSDT, DOWNUSDT, BULLUSDT, BEARUSDT]
+features:
+  momentum_days: [7, 30, 90, 180]
+  ema_fast_days: 50
+  ema_slow_days: 200
+  donchian_days: 55
+  vol_days: 30
+regime:
+  trend_threshold: 0.25
+  stress_vol_z: 2.0
+portfolio:
+  target_annual_vol: 0.12
+  max_asset_weight: 0.15
+  max_gross_exposure: 1.0
+  rebalance_frequency: 1D
+costs:
+  taker_fee_bps: 10.0
+  maker_fee_bps: 10.0
+  half_spread_bps: 2.0
+  base_slippage_bps: 3.0
+  adverse_multipliers: [1.0, 2.0, 3.0]
+validation:
+  train_days: 730
+  test_days: 180
+  step_days: 90
+  embargo_days: 7
+  bootstrap_samples: 2000
+  monte_carlo_paths: 2000
+  min_trades: 100
+  require_positive_net_expectancy: true
+  require_positive_oos_sharpe: true
+  max_pbo: 0.20
+  min_deflated_sharpe_probability: 0.95
+certification:
+  paper_promotion_default: NO_GO
+  require_clean_holdout: true
+  require_stress_survival: true
