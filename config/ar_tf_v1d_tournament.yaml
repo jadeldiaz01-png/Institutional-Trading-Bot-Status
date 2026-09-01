@@ -1,0 +1,59 @@
+strategy_id: AR-TF-v1-D
+stage: RESEARCH
+live_trading_enabled: false
+paper_automatic_promotion: false
+
+holdout:
+  days: 365
+  evaluate_during_tournament: false
+  single_open_only: true
+
+tournament:
+  families:
+    - structural_ar_tf
+    - structural_plus_dispersion
+    - ridge
+    - hist_gradient_boosting
+    - xgboost
+    - lstm
+    - itransformer
+  llm_news_regime:
+    enabled: false
+    reason: REQUIRES_POINT_IN_TIME_NEWS_CORPUS
+  seed_repeats: 5
+  common_folds_required: true
+  register_failed_trials: true
+  pbo_slices: 8
+  cost_multipliers: [1.0, 2.0, 3.0]
+
+gates:
+  min_oos_sharpe: 0.0
+  min_oos_expectancy: 0.0
+  min_dsr_probability: 0.95
+  max_pbo: 0.20
+  min_cost_stress_expectancy: 0.0
+  min_trials: 2
+
+selection:
+  policy: robustness_first_lexicographic
+  order:
+    - dsr_probability
+    - net_oos_sharpe
+    - net_oos_expectancy
+  forbid_holdout_tuning: true
+  maximum_automated_state: FROZEN_HOLDOUT_CANDIDATE
+
+required_evidence:
+  - dataset_manifest_sha256
+  - lifecycle_metadata_sha256
+  - code_sha
+  - experiment_registry
+  - synchronous_oos_return_matrix
+  - pbo
+  - dsr_per_trial
+  - cost_stress_1x_2x_3x
+  - benchmark_comparison
+  - block_bootstrap
+  - regime_breakdown
+  - turnover_and_liquidity
+  - parameter_sensitivity
