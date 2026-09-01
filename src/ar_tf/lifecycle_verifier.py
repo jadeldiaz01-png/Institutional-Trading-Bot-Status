@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import urllib.error
 import urllib.request
 import zipfile
 from dataclasses import dataclass, asdict
@@ -14,7 +15,8 @@ import pandas as pd
 
 from .evidence_acquisition import LifecycleCandidate, VISION_BASE, canonical_sha256
 
-EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
+MARKET_DATA_EXCHANGE_INFO_URL = "https://data-api.binance.vision/api/v3/exchangeInfo"
+PRIMARY_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
 
 
 @dataclass(frozen=True)
@@ -102,11 +104,20 @@ def months_contiguous(months: list[str]) -> bool:
 
 
 def current_spot_symbols(timeout: int = 60) -> set[str]:
-    payload = json.loads(_read_url(EXCHANGE_INFO_URL, timeout).decode("utf-8"))
-    # Presence in current exchangeInfo is used only to decide whether the last
-    # historical archive boundary represents a terminal market boundary. It is
-    # never used to define the historical universe.
-    return {str(x["symbol"]) for x in payload.get("symbols", [])}
+    """Read current public Spot symbol presence without defining history from it.
+
+    Binance officially documents data-api.binance.vision as a no-auth market-data
+    REST endpoint supporting GET /api/v3/exchangeInfo. The primary trading-domain
+    endpoint is only a fallback because some hosted runners receive HTTP 451.
+    """
+    errors: list[str] = []
+    for url in (MARKET_DATA_EXCHANGE_INFO_URL, PRIMARY_EXCHANGE_INFO_URL):
+        try:
+            payload = json.loads(_read_url(url, timeout).decode("utf-8"))
+            return {str(x["symbol"]) for x in payload.get("symbols", [])}
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            errors.append(f"{url}:{type(exc).__name__}:{exc}")
+    raise RuntimeError("CURRENT_SPOT_STATUS_UNRESOLVED:" + " | ".join(errors))
 
 
 def verify_candidates(
