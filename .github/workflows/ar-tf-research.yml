@@ -8,6 +8,7 @@ on:
       - 'config/ar_tf_v1.yaml'
       - 'schemas/ar_tf_dataset.schema.json'
       - 'pyproject.toml'
+      - '.github/workflows/ar-tf-research.yml'
   workflow_dispatch:
 
 permissions:
@@ -35,3 +36,40 @@ jobs:
           assert d['paper_authorized'] is False
           print('research gate fail-closed: OK')
           PY
+
+  historical-evidence-discovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - name: Enumerate real Binance Vision historical USDT universe
+        run: python -m ar_tf.evidence_runner --output-dir artifacts/ar_tf_v1d2 --timeout 60
+      - name: Assert discovery remains fail-closed
+        run: |
+          python - <<'PY'
+          import json
+          p='artifacts/ar_tf_v1d2/evidence-readiness.json'
+          d=json.load(open(p))
+          assert d['decision']=='NO_GO'
+          assert d['paper_authorized'] is False
+          assert d['provenance']['discovered_symbol_count'] > 0
+          assert d['provenance']['observation_count'] > 0
+          print(json.dumps({
+            'symbols': d['provenance']['discovered_symbol_count'],
+            'observations': d['provenance']['observation_count'],
+            'symbols_sha256': d['provenance']['discovered_symbols_sha256'],
+            'observations_sha256': d['provenance']['observations_sha256'],
+            'candidates_sha256': d['provenance']['candidates_sha256'],
+          }, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ar-tf-v1d2-historical-evidence
+          path: artifacts/ar_tf_v1d2/
+          if-no-files-found: error
