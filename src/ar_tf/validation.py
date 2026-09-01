@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import math
 import numpy as np
 import pandas as pd
@@ -69,6 +70,52 @@ def deflated_sharpe_probability(observed_sharpe: float, n_obs: int, skew: float 
         return 0.0
     z = (observed_sharpe - expected_max) / math.sqrt(denom_sq)
     return float(norm.cdf(z))
+
+
+def probability_of_backtest_overfitting(strategy_returns: pd.DataFrame, slices: int = 8) -> dict[str, float]:
+    """CSCV-style PBO estimator.
+
+    Columns are competing parameterizations/strategies and rows are synchronous
+    OOS-candidate returns. The sample is split into an even number of contiguous
+    slices. For each half-combination, choose the best in-sample Sharpe and rank
+    that same candidate out-of-sample. PBO is P(logit(relative OOS rank) <= 0).
+    """
+    x = strategy_returns.dropna(how="any")
+    if x.shape[1] < 2 or len(x) < slices or slices < 4 or slices % 2:
+        return {"pbo": float("nan"), "combinations": 0.0, "median_logit": float("nan")}
+    blocks = np.array_split(np.arange(len(x)), slices)
+    logits: list[float] = []
+    all_blocks = set(range(slices))
+    half = slices // 2
+    # Symmetric complements are duplicates; keep combinations containing block 0.
+    combos = [c for c in itertools.combinations(range(slices), half) if 0 in c]
+    for combo in combos:
+        train_idx = np.concatenate([blocks[i] for i in combo])
+        test_blocks = sorted(all_blocks - set(combo))
+        test_idx = np.concatenate([blocks[i] for i in test_blocks])
+        train = x.iloc[train_idx]
+        test = x.iloc[test_idx]
+        train_std = train.std(ddof=1).replace(0, np.nan)
+        test_std = test.std(ddof=1).replace(0, np.nan)
+        train_sr = train.mean() / train_std
+        test_sr = test.mean() / test_std
+        if train_sr.dropna().empty or test_sr.dropna().empty:
+            continue
+        winner = train_sr.idxmax()
+        ranked = test_sr.rank(method="average", ascending=True)
+        rank = float(ranked.loc[winner])
+        n = float(ranked.notna().sum())
+        omega = rank / (n + 1.0)
+        omega = float(np.clip(omega, 1e-12, 1 - 1e-12))
+        logits.append(math.log(omega / (1.0 - omega)))
+    if not logits:
+        return {"pbo": float("nan"), "combinations": 0.0, "median_logit": float("nan")}
+    arr = np.asarray(logits)
+    return {
+        "pbo": float(np.mean(arr <= 0.0)),
+        "combinations": float(len(arr)),
+        "median_logit": float(np.median(arr)),
+    }
 
 
 def certification_decision(metrics: dict, dsr_probability: float, pbo: float, stress_metrics: list[dict], *, min_trades: int = 100, max_pbo: float = 0.20, min_dsr: float = 0.95) -> dict:
