@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .ingestion import active_universe, build_manifest, download_month, load_lifecycle_csv, write_manifest
+from .ingestion import build_manifest, download_month, load_lifecycle_csv, write_manifest
 
 
 def month_starts(start: pd.Timestamp, end: pd.Timestamp):
@@ -15,6 +15,10 @@ def month_starts(start: pd.Timestamp, end: pd.Timestamp):
     while cur <= stop:
         yield cur
         cur = cur + pd.offsets.MonthBegin(1)
+
+
+def _overlaps(lifecycle, start: pd.Timestamp, end: pd.Timestamp) -> bool:
+    return lifecycle.listed_at < end and (lifecycle.delisted_at is None or lifecycle.delisted_at > start)
 
 
 def download_history(lifecycle_csv: str, start: str, end: str, output_dir: str, interval: str = "1d") -> dict:
@@ -32,9 +36,18 @@ def download_history(lifecycle_csv: str, start: str, end: str, output_dir: str, 
     acquisition = []
 
     for month in month_starts(start_ts, end_ts):
-        universe = active_universe(lifecycles, month)
+        month_end = month + pd.offsets.MonthBegin(1)
+        universe = {s for s, lifecycle in lifecycles.items() if _overlaps(lifecycle, month, month_end)}
         for symbol in sorted(universe):
+            lifecycle = lifecycles[symbol]
             frame = download_month(symbol, interval, month.year, month.month)
+            # A listing/delisting can occur mid-month. Fetch based on interval overlap,
+            # then filter rows to the exact lifecycle window; month-start eligibility
+            # alone would silently omit mid-month listings.
+            if not frame.empty:
+                frame = frame[frame.index >= lifecycle.listed_at]
+                if lifecycle.delisted_at is not None:
+                    frame = frame[frame.index < lifecycle.delisted_at]
             acquisition.append({"symbol": symbol, "month": month.strftime("%Y-%m"), "rows": int(len(frame))})
             if not frame.empty:
                 by_symbol[symbol].append(frame)
