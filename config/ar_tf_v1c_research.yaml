@@ -1,0 +1,52 @@
+strategy_id: AR-TF-v1-C
+stage: RESEARCH
+live_trading_enabled: false
+structural_alpha:
+  baseline: AR-TF-v1
+  preserve_interpretable_baseline: true
+regime_overlay:
+  dispersion:
+    enabled: true
+    lookback_days: [20, 30, 60]
+    z_window_days: [180, 252, 365]
+    risk_off_z: [1.0, 1.5, 2.0]
+model_candidates:
+  - id: ridge
+    family: linear
+    required_baseline: true
+  - id: hist_gradient_boosting
+    family: tree_boosting
+    status: candidate
+  - id: xgboost
+    family: gradient_boosting
+    status: candidate
+  - id: lstm
+    family: deep_learning
+    status: challenger_only
+  - id: itransformer
+    family: deep_learning
+    status: challenger_only
+  - id: llm_news_regime
+    family: llm
+    status: disabled_until_point_in_time_news_dataset
+execution_gate:
+  enabled: true
+  min_expected_edge_bps: [5, 10, 15, 25]
+  uncertainty_multiplier: [0.5, 1.0, 1.5, 2.0]
+  max_turnover_per_rebalance: [0.20, 0.35, 0.50]
+  cost_multipliers: [1.0, 2.0, 3.0]
+validation:
+  selection_metric: net_oos_sharpe
+  require_net_positive_oos: true
+  require_baseline_relative_improvement: true
+  require_cpcv_pbo: true
+  max_pbo: 0.20
+  require_deflated_sharpe: true
+  min_dsr_probability: 0.95
+  frozen_holdout_days: 365
+  holdout_single_open: true
+  register_failed_trials: true
+  seed_repeats_for_stochastic_models: 5
+promotion:
+  automatic_paper_authorization: false
+  maximum_automated_state: PAPER_CANDIDATE
