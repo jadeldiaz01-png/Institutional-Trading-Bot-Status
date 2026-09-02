@@ -21,9 +21,20 @@ def cross_sectional_dispersion(returns: pd.DataFrame) -> pd.Series:
 
 
 def dispersion_state(returns: pd.DataFrame, cfg: AlphaLabConfig = AlphaLabConfig()) -> pd.DataFrame:
-    dispersion = cross_sectional_dispersion(returns)
-    mean = dispersion.rolling(cfg.dispersion_z_window, min_periods=max(30, cfg.dispersion_z_window // 4)).mean()
-    std = dispersion.rolling(cfg.dispersion_z_window, min_periods=max(30, cfg.dispersion_z_window // 4)).std(ddof=0).replace(0, np.nan)
+    """Lagged dispersion risk state for next-bar portfolio decisions.
+
+    The raw cross-sectional dispersion at date t is not allowed to scale the
+    portfolio decided at the same timestamp. We smooth the observed dispersion
+    over ``dispersion_window`` and lag the state by one row before z-scoring it.
+    This makes the risk overlay explicitly causal and matches the 2026 evidence
+    that *lagged* dispersion is informative for subsequent momentum breakdown.
+    """
+    raw = cross_sectional_dispersion(returns)
+    min_periods = max(2, min(cfg.dispersion_window, cfg.dispersion_window // 3 or 1))
+    dispersion = raw.rolling(cfg.dispersion_window, min_periods=min_periods).mean().shift(1)
+    z_min = max(30, cfg.dispersion_z_window // 4)
+    mean = dispersion.rolling(cfg.dispersion_z_window, min_periods=z_min).mean()
+    std = dispersion.rolling(cfg.dispersion_z_window, min_periods=z_min).std(ddof=0).replace(0, np.nan)
     z = (dispersion - mean) / std
     scale = (1.0 - (z.clip(lower=0.0) / max(cfg.dispersion_risk_off_z, 1e-6))).clip(0.0, 1.0)
     return pd.DataFrame({"dispersion": dispersion, "dispersion_z": z, "momentum_scale": scale})
