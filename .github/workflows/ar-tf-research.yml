@@ -116,7 +116,7 @@ jobs:
             --workers 24 \
             --timeout 60
       - name: Validate dataset manifest
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && success()
         run: |
           python - <<'PY'
           import json
@@ -136,8 +136,9 @@ jobs:
             'holdout_evaluated': d['holdout_evaluated'],
           }, indent=2))
           PY
-      - uses: actions/upload-artifact@v4
-        if: steps.gate.outputs.ready == 'true'
+      - name: Upload historical dataset evidence
+        uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.ready == 'true'
         with:
           name: ar-tf-v1d2-historical-dataset
           path: artifacts/ar_tf_v1d2_dataset/
