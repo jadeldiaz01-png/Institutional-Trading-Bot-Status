@@ -6,6 +6,7 @@ from ar_tf.evidence_acquisition import (
     lifecycle_candidates,
     validate_verified_lifecycle,
 )
+from ar_tf.evidence_parallel import split_tradability_episodes
 
 
 def test_extracts_only_usdt_daily_archives():
@@ -63,3 +64,19 @@ def test_verified_lifecycle_can_unlock_historical_download_only():
         }
     ])
     assert validate_verified_lifecycle(rows) == []
+
+
+def test_disjoint_history_becomes_separate_tradability_episodes():
+    months = ["2022-09", "2022-10", "2023-03", "2023-04", "2026-01"]
+    assert split_tradability_episodes(months) == [
+        ["2022-09", "2022-10"],
+        ["2023-03", "2023-04"],
+        ["2026-01"],
+    ]
+
+
+def test_episode_split_is_deterministic_and_order_independent():
+    a = ["2024-03", "2024-01", "2024-02", "2024-08"]
+    b = list(reversed(a))
+    assert split_tradability_episodes(a) == split_tradability_episodes(b)
+    assert split_tradability_episodes(a) == [["2024-01", "2024-02", "2024-03"], ["2024-08"]]
