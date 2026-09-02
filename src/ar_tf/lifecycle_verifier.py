@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .evidence_acquisition import LifecycleCandidate, VISION_BASE, canonical_sha256
+from .evidence_acquisition import LifecycleCandidate, VISION_BASE
 
 MARKET_DATA_EXCHANGE_INFO_URL = "https://data-api.binance.vision/api/v3/exchangeInfo"
 PRIMARY_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
@@ -105,16 +105,21 @@ def months_contiguous(months: list[str]) -> bool:
     return all(b - a == 1 for a, b in zip(values, values[1:]))
 
 
-def current_spot_symbols(timeout: int = 60) -> set[str]:
-    """Read current public Spot symbol presence without defining history from it."""
+def current_spot_statuses(timeout: int = 60) -> dict[str, str]:
+    """Return current public Spot symbol status without defining history from it."""
     errors: list[str] = []
     for url in (MARKET_DATA_EXCHANGE_INFO_URL, PRIMARY_EXCHANGE_INFO_URL):
         try:
             payload = json.loads(_read_url(url, timeout).decode("utf-8"))
-            return {str(x["symbol"]) for x in payload.get("symbols", [])}
+            return {str(x["symbol"]): str(x.get("status", "UNKNOWN")) for x in payload.get("symbols", [])}
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             errors.append(f"{url}:{type(exc).__name__}:{exc}")
     raise RuntimeError("CURRENT_SPOT_STATUS_UNRESOLVED:" + " | ".join(errors))
+
+
+def current_spot_symbols(timeout: int = 60) -> set[str]:
+    """Compatibility helper: symbols that are currently TRADING only."""
+    return {symbol for symbol, status in current_spot_statuses(timeout).items() if status == "TRADING"}
 
 
 def verify_candidates(
@@ -124,7 +129,7 @@ def verify_candidates(
     timeout: int = 60,
 ) -> tuple[list[VerifiedLifecycle], list[dict]]:
     """Legacy single-episode verifier retained for compatibility tests."""
-    active = current_spot_symbols(timeout)
+    trading = current_spot_symbols(timeout)
     verified: list[VerifiedLifecycle] = []
     rejected: list[dict] = []
     for candidate in candidates:
@@ -139,7 +144,7 @@ def verify_candidates(
         except Exception as exc:
             rejected.append({"symbol": candidate.symbol, "reason": "BOUNDARY_VERIFICATION_FAILED", "detail": str(exc)})
             continue
-        is_active = candidate.symbol in active
+        is_active = candidate.symbol in trading
         verified.append(
             VerifiedLifecycle(
                 symbol=candidate.symbol,
@@ -161,6 +166,10 @@ def verify_candidates(
     return verified, rejected
 
 
+def file_sha256(path: str | Path) -> str:
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def write_verified_lifecycle(rows: list[VerifiedLifecycle], rejected: list[dict], output_dir: str | Path) -> dict:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -170,9 +179,8 @@ def write_verified_lifecycle(rows: list[VerifiedLifecycle], rejected: list[dict]
     else:
         df = pd.DataFrame(columns=columns)
     csv_path = out / "verified-lifecycle.csv"
-    df.to_csv(csv_path, index=False)
-    payload = df.fillna("").to_dict(orient="records")
-    digest = canonical_sha256(payload)
+    df.to_csv(csv_path, index=False, lineterminator="\n")
+    digest = file_sha256(csv_path)
     (out / "verified-lifecycle.sha256").write_text(digest + "  verified-lifecycle.csv\n", encoding="utf-8")
     (out / "lifecycle-rejected.json").write_text(json.dumps(rejected, indent=2, sort_keys=True), encoding="utf-8")
     summary = {
