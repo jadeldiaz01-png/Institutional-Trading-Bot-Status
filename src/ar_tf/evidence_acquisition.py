@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import re
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -47,11 +50,24 @@ def canonical_sha256(obj: object) -> str:
     return _sha256_bytes(raw)
 
 
-def _list_page(params: dict[str, str], timeout: int) -> ET.Element:
+def _list_page(params: dict[str, str], timeout: int, attempts: int = 5) -> ET.Element:
+    """Fetch one public S3 listing page with bounded retry for transient transport failures."""
     url = f"{S3_LIST_URL}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-evidence/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return ET.fromstring(response.read())
+    last: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-evidence/1.1"})
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return ET.fromstring(response.read())
+        except (urllib.error.URLError, TimeoutError, http.client.RemoteDisconnected, ConnectionResetError, ET.ParseError) as exc:
+            last = exc
+        except urllib.error.HTTPError as exc:
+            last = exc
+            if 400 <= exc.code < 500 and exc.code != 429:
+                raise
+        if attempt + 1 < attempts:
+            time.sleep(min(8.0, 0.5 * (2 ** attempt)))
+    raise RuntimeError(f"Binance Vision S3 listing failed after retries: {url}: {last}")
 
 
 def _ns(root: ET.Element) -> dict[str, str]:
@@ -81,11 +97,7 @@ def list_common_prefixes(prefix: str, *, timeout: int = 60) -> list[str]:
 
 
 def discover_historical_usdt_symbols(*, timeout: int = 60) -> list[str]:
-    """Enumerate historical Spot symbols represented in Binance Vision.
-
-    Current exchangeInfo is deliberately not used because it omits delisted
-    markets and would introduce survivorship bias into the research universe.
-    """
+    """Enumerate historical Spot symbols represented in Binance Vision."""
     prefixes = list_common_prefixes(MONTHLY_PREFIX, timeout=timeout)
     symbols = []
     for prefix in prefixes:
@@ -121,7 +133,6 @@ def list_binance_vision_keys(prefix: str, *, max_pages: int | None = None, timeo
 
 
 def acquire_usdt_daily_keys(*, timeout: int = 60) -> tuple[list[str], list[str]]:
-    """Enumerate all historical USDT symbols, then fetch only their 1d archives."""
     symbols = discover_historical_usdt_symbols(timeout=timeout)
     keys: list[str] = []
     for symbol in symbols:
@@ -141,12 +152,7 @@ def extract_usdt_daily_observations(keys: list[str]) -> list[ArchiveObservation]
             continue
         month = f"{match.group('year')}-{match.group('month')}"
         observations.append(
-            ArchiveObservation(
-                symbol=symbol,
-                month=month,
-                key=key,
-                source_url=f"{VISION_BASE}/{key}",
-            )
+            ArchiveObservation(symbol=symbol, month=month, key=key, source_url=f"{VISION_BASE}/{key}")
         )
     observations.sort(key=lambda x: (x.symbol, x.month, x.key))
     return observations
@@ -159,14 +165,12 @@ def lifecycle_candidates(observations: list[ArchiveObservation]) -> list[Lifecyc
     result: list[LifecycleCandidate] = []
     for symbol, rows in sorted(by_symbol.items()):
         months = sorted({r.month for r in rows})
-        result.append(
-            LifecycleCandidate(
-                symbol=symbol,
-                first_archive_month=months[0],
-                last_archive_month=months[-1],
-                observation_count=len(months),
-            )
-        )
+        result.append(LifecycleCandidate(
+            symbol=symbol,
+            first_archive_month=months[0],
+            last_archive_month=months[-1],
+            observation_count=len(months),
+        ))
     return result
 
 
