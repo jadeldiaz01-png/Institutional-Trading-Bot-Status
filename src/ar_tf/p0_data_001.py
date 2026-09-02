@@ -50,13 +50,19 @@ def audit_p0_data_001(
     }
 
     missing_resolution_records = sorted(
-        {"market_id": key[0], "previous": key[1], "current": key[2]}
-        for key in raw_events.keys() - resolutions.keys()
-    , key=lambda x: (x["market_id"], x["previous"], x["current"]))
+        [
+            {"market_id": key[0], "previous": key[1], "current": key[2]}
+            for key in raw_events.keys() - resolutions.keys()
+        ],
+        key=lambda x: (x["market_id"], x["previous"], x["current"]),
+    )
     stale_resolution_records = sorted(
-        {"market_id": key[0], "previous": key[1], "current": key[2]}
-        for key in resolutions.keys() - raw_events.keys()
-    , key=lambda x: (x["market_id"], x["previous"], x["current"]))
+        [
+            {"market_id": key[0], "previous": key[1], "current": key[2]}
+            for key in resolutions.keys() - raw_events.keys()
+        ],
+        key=lambda x: (x["market_id"], x["previous"], x["current"]),
+    )
 
     verified = []
     pending = []
@@ -85,8 +91,6 @@ def audit_p0_data_001(
     if pending:
         blockers.append("GAP_RESOLUTION_NOT_VERIFIED")
 
-    # The old byte-wise comparison is diagnostic only. It is expected to differ
-    # from the canonical provenance hash and MUST NOT increment unresolved_count.
     result = {
         "schema_version": "1.0.0",
         "decision": "P0_DATA_001_CLOSED" if not blockers else "NO_GO",
