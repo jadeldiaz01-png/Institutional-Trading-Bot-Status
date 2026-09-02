@@ -1,0 +1,80 @@
+stage: RESEARCH
+live_trading_enabled: false
+paper_authorized: false
+web4_label_is_architectural_shorthand: true
+
+interoperability:
+  mcp:
+    protocol_version: '2026-07-28'
+    role: agent_to_tool
+    mode: advisory_only
+    transport_preference: streamable_http
+    require_trusted_server: true
+    require_least_privilege_credentials: true
+    sensitive_tool_approval: required
+  a2a:
+    protocol_version: '1.0'
+    role: agent_to_agent
+    mode: research_delegation_only
+    remote_agent_trust_default: deny
+    require_agent_card_validation: true
+
+identity:
+  did_vc:
+    status: experimental
+    did_target: '1.1'
+    require_revocation_check: true
+    require_issuer_trust_policy: true
+    cannot_replace_workload_identity: true
+
+knowledge:
+  kg_rag:
+    status: experimental
+    allowed_sources: [evidence_ledger, immutable_research_artifacts, verified_public_sources]
+    every_claim_requires_source_binding: true
+    model_output_is_evidence: false
+
+confidential_computing:
+  status: evaluate_only
+  require_measured_latency_cost_security_benefit: true
+  required_for_public_market_data: false
+
+capabilities:
+  allow:
+    - read_research_data
+    - read_public_market_data
+    - retrieve_evidence
+    - query_knowledge_graph
+    - summarize_research
+    - propose_hypothesis
+    - run_sandbox_evaluation
+    - emit_signed_evidence
+  deny:
+    - place_order
+    - cancel_order
+    - change_risk_limit
+    - open_holdout
+    - promote_strategy
+    - enable_live_trading
+    - move_capital
+    - write_exchange_credentials
+
+admission:
+  minimum_score: 70
+  weights:
+    maturity: 0.20
+    security: 0.25
+    evidence_quality: 0.20
+    trading_relevance: 0.25
+    operational_simplicity: 0.10
+  required_measurements:
+    - p50_latency_ms
+    - p95_latency_ms
+    - error_rate
+    - availability
+    - token_or_compute_cost
+    - security_findings
+    - evidence_grounding_accuracy
+    - human_override_rate
+    - hallucination_or_unsupported_claim_rate
+  automatic_profitability_credit: false
