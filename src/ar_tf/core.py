@@ -43,7 +43,10 @@ def build_features(df: pd.DataFrame, cfg: ResearchConfig = ResearchConfig()) -> 
     x["donchian_breakout"] = (x["close"] > x["donchian_high"]).astype(float)
     x["ann_vol"] = logret.ewm(span=cfg.vol_days, adjust=False).std() * np.sqrt(365)
     x["vol_z"] = _zscore(x["ann_vol"], window=365)
-    x["notional"] = x["close"] * x["volume"]
+    if "quote_volume" in x.columns:
+        x["notional"] = pd.to_numeric(x["quote_volume"], errors="coerce")
+    else:
+        x["notional"] = x["close"] * x["volume"]
     return x
 
 
@@ -88,13 +91,11 @@ def portfolio_weights(signals: pd.Series, annual_vol: pd.Series, cfg: ResearchCo
     if inv_risk.sum() <= 0:
         return pd.Series(0.0, index=aligned.index)
 
-    # First create relative risk weights, then enforce single-name caps.
     w = inv_risk / inv_risk.sum()
     w = w.clip(upper=cfg.max_asset_weight)
     if w.sum() <= 0:
         return pd.Series(0.0, index=aligned.index)
 
-    # Perfect-correlation volatility upper bound at current gross exposure.
     vol_upper_bound = float((w * aligned.loc[w.index, "vol"]).sum())
     if not np.isfinite(vol_upper_bound) or vol_upper_bound <= 0:
         return pd.Series(0.0, index=w.index)
