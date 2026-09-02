@@ -35,6 +35,8 @@ class VerifiedLifecycle:
     archive_months_contiguous: bool
     first_boundary_zip_sha256: str
     last_boundary_zip_sha256: str
+    episode_id: int = 1
+    episode_count: int = 1
     evidence_method: str = "BINANCE_VISION_CHECKSUM_VERIFIED_TRADABLE_BOUNDARIES"
 
 
@@ -104,12 +106,7 @@ def months_contiguous(months: list[str]) -> bool:
 
 
 def current_spot_symbols(timeout: int = 60) -> set[str]:
-    """Read current public Spot symbol presence without defining history from it.
-
-    Binance officially documents data-api.binance.vision as a no-auth market-data
-    REST endpoint supporting GET /api/v3/exchangeInfo. The primary trading-domain
-    endpoint is only a fallback because some hosted runners receive HTTP 451.
-    """
+    """Read current public Spot symbol presence without defining history from it."""
     errors: list[str] = []
     for url in (MARKET_DATA_EXCHANGE_INFO_URL, PRIMARY_EXCHANGE_INFO_URL):
         try:
@@ -126,6 +123,7 @@ def verify_candidates(
     *,
     timeout: int = 60,
 ) -> tuple[list[VerifiedLifecycle], list[dict]]:
+    """Legacy single-episode verifier retained for compatibility tests."""
     active = current_spot_symbols(timeout)
     verified: list[VerifiedLifecycle] = []
     rejected: list[dict] = []
@@ -167,7 +165,10 @@ def write_verified_lifecycle(rows: list[VerifiedLifecycle], rejected: list[dict]
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     columns = list(VerifiedLifecycle.__dataclass_fields__)
-    df = pd.DataFrame([asdict(x) for x in rows], columns=columns).sort_values("symbol") if rows else pd.DataFrame(columns=columns)
+    if rows:
+        df = pd.DataFrame([asdict(x) for x in rows], columns=columns).sort_values(["symbol", "episode_id"])
+    else:
+        df = pd.DataFrame(columns=columns)
     csv_path = out / "verified-lifecycle.csv"
     df.to_csv(csv_path, index=False)
     payload = df.fillna("").to_dict(orient="records")
@@ -176,10 +177,12 @@ def write_verified_lifecycle(rows: list[VerifiedLifecycle], rejected: list[dict]
     (out / "lifecycle-rejected.json").write_text(json.dumps(rejected, indent=2, sort_keys=True), encoding="utf-8")
     summary = {
         "verified_rows": len(rows),
+        "verified_symbols": len({x.symbol for x in rows}),
+        "multi_episode_symbols": len({x.symbol for x in rows if x.episode_count > 1}),
         "rejected_rows": len(rejected),
         "verified_lifecycle_sha256": digest,
         "certification_complete": len(rejected) == 0 and len(rows) > 0,
-        "definition": "checksum-verified observed Binance Spot tradability window",
+        "definition": "checksum-verified observed Binance Spot tradability episodes",
     }
     (out / "lifecycle-verification-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     return summary
