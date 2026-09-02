@@ -22,19 +22,46 @@ def validate_point_in_time(frame: pd.DataFrame) -> None:
         raise ValueError("dataset has no usable values")
 
 
-def run_backtest(returns: pd.DataFrame, target_weights: pd.DataFrame, costs: CostModel = CostModel(), cost_multiplier: float = 1.0) -> pd.DataFrame:
-    """Close-to-close research simulation. Weights are shifted one bar to prevent look-ahead."""
+def run_backtest(
+    returns: pd.DataFrame,
+    target_weights: pd.DataFrame,
+    costs: CostModel = CostModel(),
+    cost_multiplier: float = 1.0,
+    missing_held_asset_return: float = 0.0,
+) -> pd.DataFrame:
+    """Close-to-close research simulation with one-bar delayed execution.
+
+    ``missing_held_asset_return`` is a conservative terminal/data-loss stress.
+    It applies only where an effective non-zero position exists but that market's
+    return is missing. Missing returns for assets with zero exposure remain zero.
+    A value such as -0.25 prevents a delisted/disappeared market from being
+    silently treated as risk-free cash after the last observed bar.
+    """
+    if not -1.0 <= missing_held_asset_return <= 0.0:
+        raise ValueError("missing_held_asset_return must be between -1 and 0")
     validate_point_in_time(returns)
     validate_point_in_time(target_weights)
     r, w = returns.align(target_weights, join="inner", axis=0)
     r, w = r.align(w, join="inner", axis=1)
     executed_w = w.shift(1).fillna(0.0)
-    gross = (executed_w * r.fillna(0.0)).sum(axis=1)
+    realized = r.copy()
+    missing_with_position = realized.isna() & executed_w.ne(0.0)
+    realized = realized.fillna(0.0)
+    if missing_held_asset_return != 0.0:
+        realized = realized.mask(missing_with_position, float(missing_held_asset_return))
+    gross = (executed_w * realized).sum(axis=1)
     turnover = executed_w.diff().abs().sum(axis=1).fillna(executed_w.abs().sum(axis=1))
     trading_cost = turnover * costs.one_way_rate(cost_multiplier)
     net = gross - trading_cost
     equity = (1.0 + net).cumprod()
-    return pd.DataFrame({"gross_return": gross, "turnover": turnover, "trading_cost": trading_cost, "net_return": net, "equity": equity})
+    return pd.DataFrame({
+        "gross_return": gross,
+        "turnover": turnover,
+        "trading_cost": trading_cost,
+        "missing_held_positions": missing_with_position.sum(axis=1).astype(float),
+        "net_return": net,
+        "equity": equity,
+    })
 
 
 def walk_forward_splits(index: pd.DatetimeIndex, train_days: int = 730, test_days: int = 180, step_days: int = 90, embargo_days: int = 7):
