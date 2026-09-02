@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from ar_tf.alpha_lab import AlphaLabConfig, cost_aware_trade_gate, dispersion_state, turnover_limiter
+from ar_tf.alpha_lab import AlphaLabConfig, cost_aware_trade_gate, dispersion_state, drawdown_derisk_scale, turnover_limiter
 from ar_tf.core import ResearchConfig, portfolio_weights
 from ar_tf.model_research import RidgeForecaster, forward_return, purged_train_test
 
@@ -34,6 +34,14 @@ def test_dispersion_state_is_one_bar_lagged():
     shocked.iloc[-1] = [1.0, -1.0]
     changed = dispersion_state(shocked, cfg)
     assert pd.isna(changed.iloc[-1]["dispersion"]) or changed.iloc[-1]["dispersion"] == base.iloc[-1]["dispersion"]
+
+
+def test_drawdown_overlay_uses_prior_state_only():
+    idx = pd.date_range("2026-01-01", periods=5, freq="D", tz="UTC")
+    r = pd.Series([0.0, 0.0, -0.20, 0.0, 0.0], index=idx)
+    scale = drawdown_derisk_scale(r, trigger=0.15, stressed_scale=0.50)
+    assert scale.iloc[2] == 1.0
+    assert scale.iloc[3] == 0.50
 
 
 def test_turnover_limiter_enforces_budget():
