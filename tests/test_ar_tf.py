@@ -41,6 +41,16 @@ def test_backtest_shifts_weights_and_charges_costs():
     assert result["trading_cost"].sum() > 0
 
 
+def test_missing_return_is_penalized_only_when_position_is_held():
+    idx = pd.date_range("2025-01-01", periods=4, freq="D", tz="UTC")
+    r = pd.DataFrame({"DEADUSDT": [0.0, 0.0, np.nan, np.nan]}, index=idx)
+    w = pd.DataFrame({"DEADUSDT": [1.0, 1.0, 0.0, 0.0]}, index=idx)
+    result = run_backtest(r, w, CostModel(0, 0, 0), missing_held_asset_return=-0.25)
+    assert result.iloc[2]["missing_held_positions"] == 1.0
+    assert abs(result.iloc[2]["gross_return"] + 0.25) < 1e-12
+    assert result.iloc[3]["missing_held_positions"] == 0.0
+
+
 def test_certification_is_fail_closed():
     metrics = performance_metrics(pd.Series([0.001] * 1000))
     decision = certification_decision(metrics, dsr_probability=0.50, pbo=0.10, stress_metrics=[metrics])
