@@ -10,11 +10,10 @@ from .evidence_acquisition import (
     extract_usdt_daily_observations,
     lifecycle_candidates,
     validate_verified_lifecycle,
-    verified_lifecycle_sha256,
     write_discovery_bundle,
 )
 from .evidence_parallel import acquire_usdt_daily_keys_parallel, verify_candidates_parallel
-from .lifecycle_verifier import write_verified_lifecycle
+from .lifecycle_verifier import file_sha256, write_verified_lifecycle
 
 
 def main() -> None:
@@ -53,15 +52,19 @@ def main() -> None:
         result["boundary_verification"] = summary
         lifecycle_path = str(Path(args.output_dir) / "verified-lifecycle.csv")
         if rejected:
-            result["reasons"] = ["HISTORICAL_LIFECYCLE_HAS_REJECTED_SYMBOLS"]
+            result["reasons"] = ["HISTORICAL_LIFECYCLE_HAS_REJECTED_EPISODES"]
 
     if lifecycle_path:
         rows = pd.read_csv(lifecycle_path)
         reasons = validate_verified_lifecycle(rows)
+        digest = file_sha256(lifecycle_path)
+        expected_digest = result.get("boundary_verification", {}).get("verified_lifecycle_sha256")
+        if expected_digest and digest != expected_digest:
+            reasons.append("VERIFIED_LIFECYCLE_SHA256_MISMATCH")
         if not reasons and result.get("boundary_verification", {}).get("rejected_rows", 0) == 0:
             result["reasons"] = []
             result["verified_lifecycle_ready"] = True
-            result["verified_lifecycle_sha256"] = verified_lifecycle_sha256(rows)
+            result["verified_lifecycle_sha256"] = digest
             result["decision"] = "HISTORICAL_DOWNLOAD_READY"
         else:
             result["reasons"] = sorted(set(result.get("reasons", []) + reasons))
