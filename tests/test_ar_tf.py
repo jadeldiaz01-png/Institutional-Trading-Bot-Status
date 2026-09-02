@@ -3,7 +3,7 @@ import pandas as pd
 
 from ar_tf.backtest import CostModel, run_backtest
 from ar_tf.core import ResearchConfig, build_features, build_signal, portfolio_weights
-from ar_tf.validation import certification_decision, performance_metrics
+from ar_tf.validation import certification_decision, deflated_sharpe_probability, performance_metrics
 
 
 def sample_prices(n=500):
@@ -41,6 +41,18 @@ def test_certification_is_fail_closed():
     decision = certification_decision(metrics, dsr_probability=0.50, pbo=0.10, stress_metrics=[metrics])
     assert decision["decision"] == "NO_GO"
     assert "DEFLATED_SHARPE_GATE_FAILED" in decision["reasons"]
+
+
+def test_dsr_penalizes_more_trials():
+    one = deflated_sharpe_probability(1.0, 365, trials=1)
+    many = deflated_sharpe_probability(1.0, 365, trials=100)
+    assert 0.0 <= many <= one <= 1.0
+
+
+def test_dsr_preserves_annualization_equivalence():
+    annual = deflated_sharpe_probability(1.2, 730, trials=10, periods_per_year=365)
+    observation_scale = deflated_sharpe_probability(1.2 / np.sqrt(365), 730, trials=10, periods_per_year=1)
+    assert abs(annual - observation_scale) < 1e-12
 
 
 def test_performance_metrics_detects_losses():
