@@ -21,14 +21,7 @@ def cross_sectional_dispersion(returns: pd.DataFrame) -> pd.Series:
 
 
 def dispersion_state(returns: pd.DataFrame, cfg: AlphaLabConfig = AlphaLabConfig()) -> pd.DataFrame:
-    """Lagged dispersion risk state for next-bar portfolio decisions.
-
-    The raw cross-sectional dispersion at date t is not allowed to scale the
-    portfolio decided at the same timestamp. We smooth the observed dispersion
-    over ``dispersion_window`` and lag the state by one row before z-scoring it.
-    This makes the risk overlay explicitly causal and matches the 2026 evidence
-    that *lagged* dispersion is informative for subsequent momentum breakdown.
-    """
+    """Lagged dispersion risk state for next-bar portfolio decisions."""
     raw = cross_sectional_dispersion(returns)
     min_periods = max(2, min(cfg.dispersion_window, cfg.dispersion_window // 3 or 1))
     dispersion = raw.rolling(cfg.dispersion_window, min_periods=min_periods).mean().shift(1)
@@ -40,16 +33,35 @@ def dispersion_state(returns: pd.DataFrame, cfg: AlphaLabConfig = AlphaLabConfig
     return pd.DataFrame({"dispersion": dispersion, "dispersion_z": z, "momentum_scale": scale})
 
 
+def drawdown_derisk_scale(
+    market_return: pd.Series,
+    trigger: float = 0.15,
+    stressed_scale: float = 0.50,
+) -> pd.Series:
+    """Causal challenger overlay based on the prior observed market drawdown.
+
+    The aggregate-market drawdown observed at t is shifted one bar before it can
+    change target gross exposure. This overlay is an ablation hypothesis only;
+    it must beat the no-overlay baseline after costs and multiple-testing gates.
+    """
+    if not 0.0 < trigger < 1.0:
+        raise ValueError("trigger must be between zero and one")
+    if not 0.0 <= stressed_scale <= 1.0:
+        raise ValueError("stressed_scale must be between zero and one")
+    r = market_return.astype(float).fillna(0.0)
+    equity = (1.0 + r).cumprod()
+    drawdown = equity / equity.cummax() - 1.0
+    known_drawdown = drawdown.shift(1)
+    return pd.Series(np.where(known_drawdown <= -trigger, stressed_scale, 1.0), index=r.index, dtype=float)
+
+
 def cost_aware_trade_gate(
     forecast_return: pd.DataFrame,
     forecast_uncertainty: pd.DataFrame,
     round_trip_cost_bps: pd.DataFrame | float,
     cfg: AlphaLabConfig = AlphaLabConfig(),
 ) -> pd.DataFrame:
-    """Trade only when expected edge clears costs plus an uncertainty margin.
-
-    Inputs are forecasts known at decision time. The gate never looks at realized future returns.
-    """
+    """Trade only when expected edge clears costs plus an uncertainty margin."""
     f, u = forecast_return.align(forecast_uncertainty, join="inner", axis=0)
     f, u = f.align(u, join="inner", axis=1)
     if np.isscalar(round_trip_cost_bps):
