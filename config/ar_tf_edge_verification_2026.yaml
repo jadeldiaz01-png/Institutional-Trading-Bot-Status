@@ -1,0 +1,169 @@
+version: 1
+research_state: RESEARCH_ONLY
+null_hypothesis: NO_EDGE_VERIFIED_UNTIL_REPRODUCIBLE_NET_EVIDENCE
+holdout:
+  days: 365
+  policy: SINGLE_UNTOUCHED_FINAL_HOLDOUT
+  allow_feature_engineering: false
+  allow_model_selection: false
+  allow_parameter_tuning: false
+
+data_gates:
+  require_point_in_time_universe: true
+  require_dead_and_delisted_assets: true
+  require_symbol_lifecycle_evidence: true
+  require_archive_checksums: true
+  require_lifecycle_sha256: true
+  require_dataset_sha256: true
+  require_zero_unresolved_gaps: true
+  require_zero_unresolved_duplicate_conflicts: true
+  freeze_before_tournament: true
+
+strategy_families:
+  tier_a_ohlcv_daily:
+    - time_series_momentum
+    - cross_sectional_momentum
+    - moving_average_trend
+    - donchian_breakout
+    - volatility_breakout
+    - volatility_targeted_trend
+    - drawdown_derisked_trend
+    - lagged_dispersion_momentum
+    - price_path_continuity
+    - short_term_reversal
+    - volatility_conditioned_reversal
+    - rsi_reversal
+    - bollinger_reversal
+    - ridge_baseline
+    - gradient_boosting_cost_aware
+  tier_b_requires_additional_data:
+    - funding_carry
+    - futures_basis
+    - perp_spot_basis
+    - intraday_statistical_arbitrage
+    - volume_flow_models
+  tier_c_requires_microstructure:
+    - order_book_imbalance
+    - queue_aware_market_making
+    - adverse_selection_models
+    - depth_aware_execution
+  tier_d_deferred_complex_models:
+    - lstm
+    - transformer
+    - variational_factor_model
+    - reinforcement_learning
+
+preregistration:
+  register_all_trials_before_execution: true
+  register_failed_trials: true
+  common_folds_required: true
+  identical_oos_timestamps_required: true
+  count_all_attempted_trials_for_multiplicity: true
+  deterministic_trial_ids: true
+  deterministic_seeds: true
+
+validation:
+  rolling_walk_forward: true
+  anchored_walk_forward: true
+  purged_cross_validation: true
+  embargo: true
+  block_bootstrap: true
+  monte_carlo: true
+  permutation_placebo: true
+  deflated_sharpe_ratio: true
+  probability_backtest_overfitting: true
+  whites_reality_check: true
+  hansen_spa: true
+  multiple_testing_correction: true
+  parameter_plateau_test: true
+  benchmark_superiority_required: true
+
+benchmarks:
+  - btc_buy_and_hold
+  - equal_weight_point_in_time_universe
+  - simple_long_cash_trend
+  - zero_alpha_cost_matched_placebo
+
+costs:
+  scenarios: [BASE, STRESSED, SEVERE]
+  require:
+    - maker_taker_fees
+    - bid_ask_spread
+    - slippage
+    - latency
+    - partial_fills
+    - market_impact
+    - rejected_orders
+    - minimum_notional
+    - quantity_rounding
+    - price_rounding
+    - liquidity_constraints
+    - execution_delay
+  profitability_must_survive: [BASE, STRESSED]
+  severe_is_break_test: true
+
+robustness:
+  require:
+    - parameter_perturbation
+    - entry_delay
+    - execution_delay
+    - random_slippage
+    - random_missing_trades
+    - fee_increase
+    - spread_increase
+    - reduced_liquidity
+    - regime_perturbation
+    - delisting_terminal_stress
+    - universe_size_10_15_20
+  reject_narrow_optimum: true
+
+regimes:
+  require_breakdown_by:
+    - calendar_year
+    - asset
+    - bull
+    - bear
+    - sideways
+    - high_volatility
+    - low_volatility
+    - high_liquidity
+    - low_liquidity
+    - high_cross_sectional_dispersion
+    - low_cross_sectional_dispersion
+
+edge_gate:
+  min_oos_sharpe: 0.0
+  min_oos_expectancy: 0.0
+  min_dsr_probability: 0.95
+  max_pbo: 0.20
+  require_positive_compounded_growth: true
+  require_positive_block_bootstrap_lower_tail: true
+  require_spa_or_reality_check_support: true
+  require_cost_stress_survival: true
+  require_regime_stability: true
+  require_liquidity_capacity_evidence: true
+  require_parameter_plateau: true
+  maximum_pre_holdout_state: FROZEN_HOLDOUT_CANDIDATE
+
+forward_gates:
+  paper:
+    requires_untouched_holdout_pass: true
+    no_capital: true
+  testnet:
+    requires_paper_forward_evidence: true
+    requires_execution_reconciliation: true
+  live_pilot:
+    requires_human_approval: true
+    requires_forward_statistical_stability: true
+    requires_execution_quality_stability: true
+    requires_zero_unreconciled_orders: true
+
+research_priors_2026:
+  prefer_simple_before_complex: true
+  treat_public_strategy_results_as_hypotheses_not_proof: true
+  cost_aware_execution_is_first_class: true
+  dynamic_survivorship_aware_universe_is_mandatory: true
+  lagged_dispersion_is_candidate_momentum_breakdown_state: true
+  cross_sectional_momentum_requires_stronger_skepticism_than_time_series_momentum: true
+  ml_requires_economic_value_after_costs_not_forecast_accuracy_only: true
+  microstructure_models_require_l2_l3_or_trade_data: true
