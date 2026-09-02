@@ -59,16 +59,41 @@ def monte_carlo_drawdowns(returns: pd.Series, paths: int = 2000, seed: int = 11)
     return np.asarray(result)
 
 
-def deflated_sharpe_probability(observed_sharpe: float, n_obs: int, skew: float = 0.0, kurtosis: float = 3.0, trials: int = 1) -> float:
-    """Conservative DSR-style probability using multiplicity-adjusted expected max Sharpe."""
-    if n_obs < 3 or not np.isfinite(observed_sharpe):
+def deflated_sharpe_probability(
+    observed_sharpe: float,
+    n_obs: int,
+    skew: float = 0.0,
+    kurtosis: float = 3.0,
+    trials: int = 1,
+    periods_per_year: int = 365,
+) -> float:
+    """Conservative DSR-style probability with scale-consistent Sharpe inputs.
+
+    ``performance_metrics`` reports an annualized Sharpe. The probabilistic/
+    deflated Sharpe expression is evaluated on the per-observation Sharpe, so
+    the statistic is de-annualized here before applying skew/kurtosis and trial
+    multiplicity penalties. The expected maximum under multiple trials uses the
+    Bailey-Lopez de Prado extreme-value approximation with Euler's constant.
+
+    This remains a research approximation, not a substitute for reporting the
+    full trial distribution, CPCV/PBO and bootstrap evidence.
+    """
+    if n_obs < 3 or periods_per_year <= 0 or not np.isfinite(observed_sharpe):
         return 0.0
     trials = max(1, int(trials))
-    expected_max = norm.ppf(1 - 1 / max(2, trials)) / math.sqrt(max(1, n_obs - 1)) if trials > 1 else 0.0
-    denom_sq = (1 - skew * observed_sharpe + ((kurtosis - 1) / 4) * observed_sharpe**2) / max(1, n_obs - 1)
-    if denom_sq <= 0:
+    sr = float(observed_sharpe) / math.sqrt(float(periods_per_year))
+    if trials > 1:
+        sr_std_null = 1.0 / math.sqrt(max(1, n_obs - 1))
+        gamma = 0.5772156649015329
+        z1 = norm.ppf(1.0 - 1.0 / trials)
+        z2 = norm.ppf(1.0 - 1.0 / (trials * math.e))
+        expected_max = sr_std_null * ((1.0 - gamma) * z1 + gamma * z2)
+    else:
+        expected_max = 0.0
+    denom_sq = (1.0 - skew * sr + ((kurtosis - 1.0) / 4.0) * sr**2) / max(1, n_obs - 1)
+    if not np.isfinite(denom_sq) or denom_sq <= 0:
         return 0.0
-    z = (observed_sharpe - expected_max) / math.sqrt(denom_sq)
+    z = (sr - expected_max) / math.sqrt(denom_sq)
     return float(norm.cdf(z))
 
 
