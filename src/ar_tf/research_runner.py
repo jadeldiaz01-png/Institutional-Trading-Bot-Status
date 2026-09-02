@@ -40,12 +40,12 @@ def _raw_symbol(market_id: str, frame: pd.DataFrame) -> str:
     return market_id.split("__E", 1)[0].upper()
 
 
-def build_daily_targets(
+def build_daily_state(
     frames: dict[str, pd.DataFrame],
     cfg: ResearchConfig,
     universe_cfg: dict | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build causal daily targets over a point-in-time liquidity universe."""
+) -> dict[str, pd.DataFrame]:
+    """Build causal returns, targets and selected point-in-time universe mask."""
     universe_cfg = universe_cfg or {}
     max_assets = int(universe_cfg.get("max_assets", max(1, len(frames))))
     min_history_days = int(universe_cfg.get("min_history_days", 0))
@@ -81,6 +81,7 @@ def build_daily_targets(
         min_periods=max(2, min(liquidity_lookback, liquidity_lookback // 3 or 1)),
     ).median()
     weights = pd.DataFrame(0.0, index=idx, columns=columns, dtype=float)
+    selected_mask = pd.DataFrame(False, index=idx, columns=columns, dtype=bool)
 
     static_allowed: dict[str, bool] = {}
     for market_id, raw in raw_symbols.items():
@@ -106,6 +107,7 @@ def build_daily_targets(
         selected = list(eligible_liq.head(max_assets).index)
         if not selected:
             continue
+        selected_mask.loc[ts, selected] = True
         sig = signals.loc[ts, selected].dropna()
         vol = vols.loc[ts, selected].dropna()
         common_selected = sig.index.intersection(vol.index)
@@ -114,7 +116,22 @@ def build_daily_targets(
         w = portfolio_weights(sig.loc[common_selected], vol.loc[common_selected], cfg)
         if not w.empty:
             weights.loc[ts, w.index] = w
-    return returns, weights
+    return {
+        "returns": returns,
+        "weights": weights,
+        "selected_mask": selected_mask,
+        "liquidity": liquidity,
+        "notional": notionals,
+    }
+
+
+def build_daily_targets(
+    frames: dict[str, pd.DataFrame],
+    cfg: ResearchConfig,
+    universe_cfg: dict | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    state = build_daily_state(frames, cfg, universe_cfg)
+    return state["returns"], state["weights"]
 
 
 def freeze_holdout(index: pd.DatetimeIndex, holdout_days: int) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
@@ -173,8 +190,6 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
     metrics = performance_metrics(oos)
     skew = float(oos.skew()) if len(oos) > 2 else 0.0
     kurt = float(oos.kurtosis() + 3) if len(oos) > 3 else 3.0
-    # Folds are not independent strategy trials. Multiplicity is handled only in
-    # the actual tournament; this single-strategy precheck uses a zero benchmark.
     dsr = deflated_sharpe_probability(metrics["sharpe"], len(oos), skew, kurt, benchmark_sharpe=0.0)
     pbo = float("nan")
     stress = []
@@ -184,7 +199,7 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
     decision = certification_decision(metrics, dsr, pbo, stress, min_trades=validation["min_trades"], max_pbo=validation["max_pbo"], min_dsr=validation["min_deflated_sharpe_probability"])
     bootstrap = bootstrap_sharpe(oos, samples=validation["bootstrap_samples"])
     mc_dd = monte_carlo_drawdowns(oos, paths=validation["monte_carlo_paths"])
-    report = {
+    return {
         **decision,
         "paper_authorized": False,
         "dataset_sha256": dataset_sha,
@@ -199,7 +214,6 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
         "stress_metrics": stress,
         "required_next_gate": "PARAMETER_GRID_PBO_THEN_SINGLE_UNTOUCHED_HOLDOUT",
     }
-    return report
 
 
 def main() -> None:
