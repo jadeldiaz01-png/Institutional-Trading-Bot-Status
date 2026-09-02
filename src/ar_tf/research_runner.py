@@ -45,12 +45,7 @@ def build_daily_targets(
     cfg: ResearchConfig,
     universe_cfg: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build causal daily targets over a point-in-time liquidity universe.
-
-    Universe membership uses only observations known by the current close. The
-    resulting target weights are shifted one bar by ``run_backtest``, so current
-    close/quote-volume information can only affect next-bar PnL.
-    """
+    """Build causal daily targets over a point-in-time liquidity universe."""
     universe_cfg = universe_cfg or {}
     max_assets = int(universe_cfg.get("max_assets", max(1, len(frames))))
     min_history_days = int(universe_cfg.get("min_history_days", 0))
@@ -58,7 +53,6 @@ def build_daily_targets(
     liquidity_lookback = int(universe_cfg.get("liquidity_lookback_days", 30))
     exclude_patterns = tuple(str(x).upper() for x in universe_cfg.get("exclude_patterns", []))
     exclude_base_assets = {str(x).upper() for x in universe_cfg.get("exclude_base_assets", [])}
-
     if max_assets < 1 or liquidity_lookback < 1:
         raise ValueError("NO_GO: invalid point-in-time universe configuration")
 
@@ -96,11 +90,13 @@ def build_daily_targets(
 
     for ts in idx:
         liq = liquidity.loc[ts]
+        current_notional = notionals.loc[ts]
         hist = history.loc[ts]
         mask = pd.Series({
             market_id: bool(
                 static_allowed[market_id]
                 and hist.get(market_id, 0) >= min_history_days
+                and np.isfinite(current_notional.get(market_id, np.nan))
                 and np.isfinite(liq.get(market_id, np.nan))
                 and liq.get(market_id, 0.0) >= min_notional
             )
@@ -159,7 +155,6 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
     )
     registry = JsonlExperimentRegistry(registry_path)
     oos_parts = []
-    trial_metrics = []
     splits = list(walk_forward_splits(
         research_idx,
         train_days=validation["train_days"], test_days=validation["test_days"],
@@ -173,13 +168,14 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
         metrics = performance_metrics(bt["net_return"])
         registry.append(make_record(dataset_sha, code_ref, params, {"fold": i, "kind": "walk_forward_oos"}, metrics, "COMPLETE"))
         oos_parts.append(bt["net_return"])
-        trial_metrics.append(metrics)
     oos = pd.concat(oos_parts).sort_index()
     oos = oos[~oos.index.duplicated(keep="first")]
     metrics = performance_metrics(oos)
     skew = float(oos.skew()) if len(oos) > 2 else 0.0
     kurt = float(oos.kurtosis() + 3) if len(oos) > 3 else 3.0
-    dsr = deflated_sharpe_probability(metrics["sharpe"], len(oos), skew, kurt, trials=max(1, len(splits)))
+    # Folds are not independent strategy trials. Multiplicity is handled only in
+    # the actual tournament; this single-strategy precheck uses a zero benchmark.
+    dsr = deflated_sharpe_probability(metrics["sharpe"], len(oos), skew, kurt, benchmark_sharpe=0.0)
     pbo = float("nan")
     stress = []
     for multiplier in config["costs"]["adverse_multipliers"]:
@@ -199,7 +195,7 @@ def run_research(frames: dict[str, pd.DataFrame], dataset_manifest: dict, code_r
         "dsr_probability": dsr,
         "pbo": None,
         "bootstrap_sharpe_p05": float(np.nanquantile(bootstrap, 0.05)) if bootstrap.size else None,
-        "monte_carlo_drawdown_p05": float(np.nanquantile(mc_dd, 0.05)) if mc_dd.size else None,
+        "block_bootstrap_drawdown_p05": float(np.nanquantile(mc_dd, 0.05)) if mc_dd.size else None,
         "stress_metrics": stress,
         "required_next_gate": "PARAMETER_GRID_PBO_THEN_SINGLE_UNTOUCHED_HOLDOUT",
     }
