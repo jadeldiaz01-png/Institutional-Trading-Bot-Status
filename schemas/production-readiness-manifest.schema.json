@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://institutional-trading-bot.local/schemas/production-readiness-manifest.schema.json",
+  "title": "Institutional Trading Bot Production Readiness Manifest 2026",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version","generated_at","source_commit_sha","stage","decision","evidence","gates","authorizations"],
+  "properties": {
+    "schema_version": {"const":"2026-09-01"},
+    "generated_at": {"type":"string","format":"date-time"},
+    "source_commit_sha": {"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "stage": {"enum":["RESEARCH","VERIFIED_BACKTEST","PAPER","TESTNET","SHADOW","LIVE_PILOT","SCALED_LIVE"]},
+    "decision": {"enum":["NO_GO","FROZEN_HOLDOUT_CANDIDATE","PAPER_CANDIDATE","TESTNET_CANDIDATE","SHADOW_CANDIDATE","LIVE_PILOT_CANDIDATE","SCALED_LIVE_CANDIDATE"]},
+    "evidence": {
+      "type":"object","additionalProperties":false,
+      "required":["dataset","quantitative","execution","risk","security","supply_chain","reliability","observability","governance","finops"],
+      "properties": {
+        "dataset":{"$ref":"#/$defs/evidenceGate"},"quantitative":{"$ref":"#/$defs/evidenceGate"},"execution":{"$ref":"#/$defs/evidenceGate"},"risk":{"$ref":"#/$defs/evidenceGate"},"security":{"$ref":"#/$defs/evidenceGate"},"supply_chain":{"$ref":"#/$defs/evidenceGate"},"reliability":{"$ref":"#/$defs/evidenceGate"},"observability":{"$ref":"#/$defs/evidenceGate"},"governance":{"$ref":"#/$defs/evidenceGate"},"finops":{"$ref":"#/$defs/evidenceGate"}
+      }
+    },
+    "gates": {"type":"array","minItems":1,"items":{"$ref":"#/$defs/gate"}},
+    "authorizations": {
+      "type":"object","additionalProperties":false,
+      "required":["paper","testnet","live_pilot","scaled_live"],
+      "properties":{"paper":{"type":"boolean"},"testnet":{"type":"boolean"},"live_pilot":{"type":"boolean"},"scaled_live":{"type":"boolean"}}
+    }
+  },
+  "$defs": {
+    "evidenceGate": {"type":"object","additionalProperties":false,"required":["status","artifacts"],"properties":{"status":{"enum":["PASS","FAIL","MISSING","NOT_APPLICABLE"]},"artifacts":{"type":"array","items":{"type":"string"}},"sha256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"}}},
+    "gate": {"type":"object","additionalProperties":false,"required":["id","status","blocking"],"properties":{"id":{"type":"string","minLength":1},"status":{"enum":["PASS","FAIL","MISSING"]},"blocking":{"type":"boolean"},"reason":{"type":"string"}}}
+  }
+}
