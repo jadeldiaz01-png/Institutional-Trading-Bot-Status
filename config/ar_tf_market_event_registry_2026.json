@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0.0",
+  "policy": {
+    "same_identity_halt_may_resolve_gap": true,
+    "identity_break_must_split_lifecycle": true,
+    "unknown_event_fails_closed": true,
+    "imputation_allowed": false
+  },
+  "events": [
+    {
+      "market_id": "AEURUSDT__E01",
+      "previous": "2023-12-05T00:00:00+00:00",
+      "current": "2023-12-08T00:00:00+00:00",
+      "classification": "SAME_IDENTITY_TRADING_HALT",
+      "resolution": "EXPECTED_NO_TRADING_INTERVAL",
+      "source": "https://www.binance.com/es/support/announcement/detail/7a7eef8366b7459494e7b2f7d935dbad",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance states AEUR spot trading was suspended on 2023-12-05 18:31:59 UTC due to price deviation.",
+      "requires_episode_split": false
+    },
+    {
+      "market_id": "BNXUSDT__E01",
+      "previous": "2023-02-16T00:00:00+00:00",
+      "current": "2023-02-22T00:00:00+00:00",
+      "classification": "TOKEN_SWAP_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/4d23ada51a2e4fa182835c77d51ba1a9",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Old BNX balances were recovered and new BNX distributed at 1:100; spot pairs were suspended and later reopened.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "DREPUSDT__E01",
+      "previous": "2021-03-29T00:00:00+00:00",
+      "current": "2021-04-02T00:00:00+00:00",
+      "classification": "TOKEN_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/a2c87d5944cd4856af5aabd2cb8f68b4",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance halted DREP spot pairs for a 100:1 redenomination and reopened new DREP pairs on 2021-04-02.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "QUICKUSDT__E01",
+      "previous": "2023-07-17T00:00:00+00:00",
+      "current": "2023-07-21T00:00:00+00:00",
+      "classification": "TOKEN_SWAP_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en-BH/support/announcement/detail/50b38ae7b25a45a7854c94ab67a1e7d0",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Old QUICK was swapped 1:1000 and spot trading reopened for the new token on 2023-07-21.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "STRAXUSDT__E01",
+      "previous": "2024-03-20T00:00:00+00:00",
+      "current": "2024-03-28T00:00:00+00:00",
+      "classification": "TOKEN_SWAP_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/2e6eb8e644664a6ca7b6659a226c41b0",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance performed the STRAX token swap/redenomination and reopened spot trading on 2024-03-28; distribution was 1 old STRAX to 10 new STRAX.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "LUNAUSDT__E01",
+      "previous": "2022-05-13T00:00:00+00:00",
+      "current": "2022-05-31T00:00:00+00:00",
+      "classification": "NETWORK_FORK_TICKER_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/c52fa3c686be4b2b9d5df50de15847ec",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance renamed old Terra LUNA to LUNC and distributed a new Terra 2.0 LUNA token, so the same ticker cannot be treated as one continuous economic asset.",
+      "requires_episode_split": true
+    }
+  ]
+}
