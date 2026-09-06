@@ -1,0 +1,7 @@
+{
+  "request_id": "chatgpt-20260905T2311-dataset-certifier-001",
+  "agent": "dataset-certifier",
+  "environment": "research",
+  "expected_sha": "80891c16efdacebf9410755e44bc3f47dd505769",
+  "allow_live": false
+}
