@@ -36,6 +36,20 @@ def _registry() -> dict:
     return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
 
 
+def _isolated_registry(registry: dict, market_id: str) -> dict:
+    """Keep production policy intact while isolating the event under unit test.
+
+    apply_identity_break_registry intentionally applies every authoritative event
+    present in the registry. A single-symbol fixture therefore must not include
+    unrelated BCC/BNX/etc events that have no corresponding lifecycle row.
+    """
+    return {
+        "schema_version": registry["schema_version"],
+        "policy": dict(registry["policy"]),
+        "events": [event for event in registry["events"] if event["market_id"] == market_id],
+    }
+
+
 @pytest.mark.parametrize(
     ("symbol", "previous", "current", "ratio_marker", "listed_at", "delisted_at", "first_month", "last_month"),
     [
@@ -86,7 +100,7 @@ def test_authoritative_redenomination_registry_splits_same_ticker_lifecycle(
 
     out = apply_identity_break_registry(
         [_row(symbol, listed_at, delisted_at, first_month, last_month)],
-        registry,
+        _isolated_registry(registry, market_id),
     )
     assert len(out) == 2
     old, new = out
