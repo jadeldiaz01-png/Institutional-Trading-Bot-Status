@@ -3,14 +3,19 @@ name: ar-tf-v1d2-data
 on:
   pull_request:
     paths:
+      - 'config/ar_tf_market_event_registry_2026.json'
       - 'src/ar_tf/evidence_acquisition.py'
       - 'src/ar_tf/evidence_parallel.py'
       - 'src/ar_tf/evidence_runner.py'
       - 'src/ar_tf/lifecycle_verifier.py'
+      - 'src/ar_tf/event_lifecycle.py'
+      - 'src/ar_tf/gap_evidence.py'
       - 'src/ar_tf/historical_dataset.py'
       - 'src/ar_tf/dataset_certifier.py'
       - 'tests/test_ar_tf_historical_fallback.py'
       - 'tests/test_ar_tf_dataset_certifier.py'
+      - 'tests/test_ar_tf_event_lifecycle.py'
+      - 'tests/test_ar_tf_btcst_cocos_identity_breaks.py'
       - '.github/workflows/ar-tf-v1d2-data.yml'
   workflow_dispatch:
 
