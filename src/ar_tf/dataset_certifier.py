@@ -174,13 +174,19 @@ def _checksum_report(manifest: dict) -> dict:
     monthly_verified = 0
     reconstructed_months = 0
     daily_verified = 0
+    internal_gap_daily_verified = 0
+
     for archive in manifest["archives"]:
         digest = str(archive.get("sha256", ""))
         if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
             invalid.append({"key": archive.get("key"), "reason": "invalid_archive_digest"})
-        if archive.get("source_mode") == "MONTHLY_CHECKSUM_VERIFIED":
+        source_mode = archive.get("source_mode")
+        if source_mode in {
+            "MONTHLY_CHECKSUM_VERIFIED",
+            "MONTHLY_CHECKSUM_VERIFIED_WITH_DAILY_GAP_RECOVERY",
+        }:
             monthly_verified += 1
-        elif archive.get("source_mode") == "DAILY_CHECKSUM_RECONSTRUCTED":
+        elif source_mode == "DAILY_CHECKSUM_RECONSTRUCTED":
             reconstructed_months += 1
 
     for reconstruction in manifest.get("reconstructions", []):
@@ -190,12 +196,22 @@ def _checksum_report(manifest: dict) -> dict:
             if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
                 invalid.append({"key": source.get("key"), "reason": "invalid_daily_digest"})
 
+    for repair in manifest.get("internal_gap_repairs", []):
+        if repair.get("state") != "RESOLVED":
+            continue
+        for source in repair.get("sources", []):
+            internal_gap_daily_verified += 1
+            digest = str(source.get("sha256", ""))
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
+                invalid.append({"key": source.get("key"), "reason": "invalid_internal_gap_daily_digest"})
+
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "archive_plan_count": manifest["archive_count"],
         "monthly_checksum_verified_count": monthly_verified,
         "daily_reconstructed_month_count": reconstructed_months,
         "daily_checksum_verified_source_count": daily_verified,
+        "internal_gap_daily_checksum_verified_source_count": internal_gap_daily_verified,
         "invalid_checksum_evidence_count": len(invalid),
         "invalid": invalid,
         "all_source_checksums_verified": len(invalid) == 0,
@@ -274,7 +290,7 @@ def certify_dataset(
         unresolved_count += 1
 
     certificate = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "decision": "FROZEN_DATASET" if unresolved_count == 0 else "NO_GO",
         "dataset_id": manifest["dataset_id"],
         "dataset_sha256": manifest["dataset_sha256"],
@@ -285,6 +301,9 @@ def certify_dataset(
         "source_plan_file_sha256": source_plan_file_sha,
         "source_plan_binding_verified": source_plan_binding_ok,
         "market_event_registry_sha256": canonical_sha256(registry),
+        "internal_gap_repair_manifest_sha256": manifest.get("internal_gap_repair_manifest_sha256"),
+        "internal_gap_repair_attempt_count": manifest.get("internal_gap_repair_attempt_count", 0),
+        "internal_gap_repair_resolved_count": manifest.get("internal_gap_repair_resolved_count", 0),
         "reconciliation_ledger_sha256": file_sha256(anomaly_path),
         "gap_report_sha256": file_sha256(gap_path),
         "checksum_report_sha256": file_sha256(checksum_path),
