@@ -86,12 +86,58 @@ def test_gap_report_rejects_internal_calendar_gap(tmp_path):
     assert report["events"][0]["type"] == "INTERNAL_CALENDAR_GAP"
 
 
-def test_checksum_report_requires_64_hex_length_evidence():
+def test_checksum_report_requires_real_hex_digest_not_only_length():
     manifest = {
         "archive_count": 1,
-        "archives": [{"key": "x", "sha256": "bad", "source_mode": "MONTHLY_CHECKSUM_VERIFIED"}],
+        "archives": [{"key": "x", "sha256": "z" * 64, "source_mode": "MONTHLY_CHECKSUM_VERIFIED"}],
         "reconstructions": [],
     }
     report = dc._checksum_report(manifest)
     assert report["all_source_checksums_verified"] is False
     assert report["invalid_checksum_evidence_count"] == 1
+
+
+def test_source_plan_semantic_hash_is_serialization_independent(tmp_path):
+    value = [{"symbol": "BTCUSDT", "month": "2026-01", "key": "k", "source_url": "u"}]
+    a = tmp_path / "a.json"
+    b = tmp_path / "b.json"
+    a.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+    b.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
+    semantic_a, file_a = dc._source_plan_hashes(a)
+    semantic_b, file_b = dc._source_plan_hashes(b)
+    assert semantic_a == semantic_b
+    assert file_a != file_b
+
+
+def test_exact_official_same_identity_halt_resolves_gap():
+    raw = {
+        "events": [{
+            "market_id": "AEURUSDT__E01",
+            "type": "INTERNAL_CALENDAR_GAP",
+            "previous": "2023-12-05T00:00:00+00:00",
+            "current": "2023-12-08T00:00:00+00:00",
+            "gap_days": 3,
+        }]
+    }
+    registry = {
+        "schema_version": "1.0.0",
+        "policy": {
+            "same_identity_halt_may_resolve_gap": True,
+            "identity_break_must_split_lifecycle": True,
+            "unknown_event_fails_closed": True,
+            "imputation_allowed": False,
+        },
+        "events": [{
+            "market_id": "AEURUSDT__E01",
+            "previous": "2023-12-05T00:00:00+00:00",
+            "current": "2023-12-08T00:00:00+00:00",
+            "classification": "SAME_IDENTITY_TRADING_HALT",
+            "source": "https://www.binance.com/official",
+            "source_authority": "BINANCE_OFFICIAL",
+            "evidence": "halt",
+            "requires_episode_split": False,
+        }],
+    }
+    report = dc.classify_gap_report(raw, registry)
+    assert report["resolved_gap_count"] == 1
+    assert report["unresolved_gap_count"] == 0
