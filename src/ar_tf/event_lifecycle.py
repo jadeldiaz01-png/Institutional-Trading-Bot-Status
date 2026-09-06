@@ -24,18 +24,26 @@ def _ts(value: str | pd.Timestamp) -> pd.Timestamp:
     return out.tz_localize("UTC") if out.tzinfo is None else out.tz_convert("UTC")
 
 
+def _previous_month(value: pd.Timestamp) -> pd.Timestamp:
+    first = value.normalize().replace(day=1)
+    return first - pd.offsets.MonthBegin(1)
+
+
 def apply_identity_break_registry(
     rows: Iterable[VerifiedLifecycle],
     registry: dict,
 ) -> list[VerifiedLifecycle]:
     """Split verified tradability episodes at authoritative identity breaks.
 
-    This never price-adjusts across a redenomination/fork/ticker reuse and never
-    creates synthetic candles. The last pre-break candle and first post-break
-    candle become terminal/initial boundaries of distinct market episodes.
+    No conversion ratio is applied to returns and no candles are imputed. When
+    both sides of an identity break occur inside one monthly archive, the event
+    month is assigned to the post-break episode only. This conservatively drops
+    the pre-break partial month instead of sharing one archive between distinct
+    economic identities or manufacturing a cross-break return.
+
     Only exact BINANCE_OFFICIAL registry events marked requires_episode_split
-    are eligible. Unknown or non-authoritative events are ignored here and
-    remain blocking later in the gap certifier.
+    are eligible. Unknown or non-authoritative events remain blocking later in
+    dataset certification.
     """
     policy = registry.get("policy", {})
     if policy.get("identity_break_must_split_lifecycle") is not True:
@@ -74,20 +82,27 @@ def apply_identity_break_registry(
             )
 
         idx, row = candidates[0]
+        same_month = previous.strftime("%Y-%m") == resumed.strftime("%Y-%m")
+        old_archive_end = _previous_month(previous) if same_month else previous
+        if old_archive_end.strftime("%Y-%m") < str(row.first_archive_month):
+            raise ValueError(f"identity break leaves no pre-break archive month for {symbol}")
+
         old = replace(
             row,
             delisted_at=previous.isoformat(),
             delisting_evidence_url=str(event["source"]),
             delisting_status="VERIFIED",
             active_currently=False,
-            last_archive_month=previous.strftime("%Y-%m"),
-            archive_month_count=_month_count(_ts(row.listed_at), previous),
+            last_archive_month=old_archive_end.strftime("%Y-%m"),
+            archive_month_count=_month_count(_ts(row.listed_at), old_archive_end),
             evidence_method=(
                 f"BINANCE_VISION_CHECKSUM_VERIFIED+BINANCE_OFFICIAL_IDENTITY_BREAK:"
-                f"{event['classification']}:{registry_sha}"
+                f"{event['classification']}:{registry_sha}:"
+                f"SAME_MONTH_PREBREAK_PARTIAL_DROPPED={str(same_month).lower()}"
             ),
         )
         new_end = _ts(row.delisted_at) if row.delisted_at else None
+        last_month_anchor = new_end if new_end is not None else _ts(f"{row.last_archive_month}-01")
         new = replace(
             row,
             listed_at=resumed.isoformat(),
@@ -95,15 +110,15 @@ def apply_identity_break_registry(
             listing_status="VERIFIED",
             first_archive_month=resumed.strftime("%Y-%m"),
             last_archive_month=(new_end.strftime("%Y-%m") if new_end is not None else row.last_archive_month),
-            archive_month_count=_month_count(resumed, new_end if new_end is not None else _ts(f"{row.last_archive_month}-01")),
+            archive_month_count=_month_count(resumed, last_month_anchor),
             evidence_method=(
                 f"BINANCE_VISION_CHECKSUM_VERIFIED+BINANCE_OFFICIAL_IDENTITY_BREAK:"
-                f"{event['classification']}:{registry_sha}"
+                f"{event['classification']}:{registry_sha}:"
+                f"SAME_MONTH_PREBREAK_PARTIAL_DROPPED={str(same_month).lower()}"
             ),
         )
         current[idx:idx + 1] = [old, new]
 
-    # Renumber every symbol deterministically after all splits.
     by_symbol: dict[str, list[VerifiedLifecycle]] = {}
     for row in current:
         by_symbol.setdefault(row.symbol, []).append(row)
