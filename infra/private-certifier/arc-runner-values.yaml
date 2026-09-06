@@ -1,0 +1,45 @@
+githubConfigUrl: "https://github.com/jadeldiaz01-png/Institutional-Trading-Bot-Status"
+githubConfigSecret: trading-certifier-github-app
+runnerScaleSetName: trading-certifier-jit
+minRunners: 0
+maxRunners: 1
+
+template:
+  metadata:
+    labels:
+      institutional.openai/certifier: "true"
+      institutional.openai/environment: "private-kubernetes"
+  spec:
+    automountServiceAccountToken: false
+    containers:
+      - name: runner
+        command: ["/home/runner/run.sh"]
+        env:
+          - name: CI_RUNNER_EPHEMERAL
+            value: "true"
+          - name: K8S_POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: K8S_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: K8S_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+          limits:
+            cpu: "4000m"
+            memory: "8Gi"
+
+# Security contract:
+# - GitHub App credentials live only in Kubernetes Secret trading-certifier-github-app.
+# - Do not commit PATs, App private keys, Tailscale auth keys, kubeconfigs, or exchange credentials.
+# - minRunners=0 ensures no idle runner is kept alive.
+# - maxRunners=1 bounds cost and concurrency during certification.
+# - Runner pods are single-job ephemeral resources managed by ARC.
