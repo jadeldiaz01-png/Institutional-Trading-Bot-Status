@@ -33,17 +33,19 @@ def apply_identity_break_registry(
     rows: Iterable[VerifiedLifecycle],
     registry: dict,
 ) -> list[VerifiedLifecycle]:
-    """Split verified tradability episodes at authoritative identity breaks.
+    """Apply authoritative lifecycle identity evidence without manufacturing continuity.
 
-    No conversion ratio is applied to returns and no candles are imputed. When
-    both sides of an identity break occur inside one monthly archive, the event
-    month is assigned to the post-break episode only. This conservatively drops
-    the pre-break partial month instead of sharing one archive between distinct
-    economic identities or manufacturing a cross-break return.
+    Two transformations are allowed and both require BINANCE_OFFICIAL evidence:
 
-    Only exact BINANCE_OFFICIAL registry events marked requires_episode_split
-    are eligible. Unknown or non-authoritative events remain blocking later in
-    dataset certification.
+    * ``terminal_truncate``: an old ticker/market is authoritatively terminated.
+      The lifecycle ends at the last legitimate pre-event candle and any later
+      orphan/stale archive rows are excluded by the dataset boundary filter.
+    * ``requires_episode_split``: the same ticker resumes after a swap,
+      redenomination, fork or identity change. Pre/post event observations are
+      distinct economic episodes and no return may cross the boundary.
+
+    No conversion ratio is applied to returns and no candles are imputed.
+    Unknown or non-authoritative events remain blocking in dataset certification.
     """
     policy = registry.get("policy", {})
     if policy.get("identity_break_must_split_lifecycle") is not True:
@@ -54,9 +56,47 @@ def apply_identity_break_registry(
     registry_sha = canonical_sha256(registry)
     current = list(rows)
 
+    terminal_events = [
+        event for event in registry.get("events", [])
+        if event.get("terminal_truncate") is True
+        and event.get("source_authority") == "BINANCE_OFFICIAL"
+    ]
+    terminal_events.sort(key=lambda e: (_symbol_from_market_id(str(e["market_id"])), str(e["previous"])))
+
+    for event in terminal_events:
+        symbol = _symbol_from_market_id(str(event["market_id"]))
+        terminal = _ts(str(event["previous"]))
+        candidates: list[tuple[int, VerifiedLifecycle]] = []
+        for idx, row in enumerate(current):
+            if row.symbol != symbol:
+                continue
+            start = _ts(row.listed_at)
+            end = _ts(row.delisted_at) if row.delisted_at else pd.Timestamp.max.tz_localize("UTC")
+            if start <= terminal <= end:
+                candidates.append((idx, row))
+        if len(candidates) != 1:
+            raise ValueError(
+                f"terminal event must match exactly one lifecycle episode: {symbol}: matches={len(candidates)}"
+            )
+        idx, row = candidates[0]
+        current[idx] = replace(
+            row,
+            delisted_at=terminal.isoformat(),
+            delisting_evidence_url=str(event["source"]),
+            delisting_status="VERIFIED",
+            active_currently=False,
+            last_archive_month=terminal.strftime("%Y-%m"),
+            archive_month_count=_month_count(_ts(row.listed_at), terminal),
+            evidence_method=(
+                f"BINANCE_VISION_CHECKSUM_VERIFIED+BINANCE_OFFICIAL_TERMINAL_EVENT:"
+                f"{event['classification']}:{registry_sha}"
+            ),
+        )
+
     split_events = [
         event for event in registry.get("events", [])
         if event.get("requires_episode_split") is True
+        and event.get("terminal_truncate") is not True
         and event.get("source_authority") == "BINANCE_OFFICIAL"
     ]
     split_events.sort(key=lambda e: (_symbol_from_market_id(str(e["market_id"])), str(e["current"])))
