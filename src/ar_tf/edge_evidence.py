@@ -33,7 +33,8 @@ class EdgeEvidence:
 class EdgeGatePolicy:
     min_dsr_probability: float = 0.95
     max_pbo: float = 0.20
-    require_spa_or_reality_check: bool = True
+    require_white_reality_check: bool = True
+    require_hansen_spa: bool = True
     require_parameter_plateau: bool = True
     require_regime_stability: bool = True
     require_cost_stress_survival: bool = True
@@ -67,13 +68,14 @@ def pre_holdout_edge_decision(
     common_oos_folds: bool,
     dsr_probability: float | None,
     pbo: float | None,
-    spa_or_reality_check_passed: bool,
+    white_reality_check_passed: bool,
+    hansen_spa_passed: bool,
     parameter_plateau_passed: bool,
     regime_stability_passed: bool,
     cost_stress_passed: bool,
     benchmark_superiority_passed: bool,
 ) -> dict:
-    """Fail-closed research gate. It can never authorize PAPER or LIVE."""
+    """Fail-closed pre-holdout gate; White RC and Hansen SPA must both pass."""
     reasons: list[str] = []
     if not dataset_frozen or not dataset_sha256 or not lifecycle_sha256:
         reasons.append("DATASET_NOT_CRYPTOGRAPHICALLY_FROZEN")
@@ -87,8 +89,10 @@ def pre_holdout_edge_decision(
         reasons.append("DSR_GATE_FAILED")
     if pbo is None or pbo > 0.20:
         reasons.append("PBO_GATE_FAILED")
-    if not spa_or_reality_check_passed:
-        reasons.append("MULTIPLE_TESTING_BENCHMARK_GATE_FAILED")
+    if not white_reality_check_passed:
+        reasons.append("WHITE_REALITY_CHECK_GATE_FAILED")
+    if not hansen_spa_passed:
+        reasons.append("HANSEN_SPA_GATE_FAILED")
     if not parameter_plateau_passed:
         reasons.append("PARAMETER_PLATEAU_GATE_FAILED")
     if not regime_stability_passed:
