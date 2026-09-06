@@ -72,6 +72,28 @@
       "source_authority": "BINANCE_OFFICIAL",
       "evidence": "Binance renamed old Terra LUNA to LUNC and distributed a new Terra 2.0 LUNA token, so the same ticker cannot be treated as one continuous economic asset.",
       "requires_episode_split": true
+    },
+    {
+      "market_id": "SUNUSDT__E01",
+      "previous": "2021-06-14T00:00:00+00:00",
+      "current": "2021-06-18T00:00:00+00:00",
+      "classification": "TOKEN_MIGRATION_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/bf95a72b803247ea86904ac16e13087d",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance confirms completion of the SUN token migration and 1:1,000 redenomination, with SUNOLD convertible into the new SUN token.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "VIDTUSDT__E01",
+      "previous": "2022-10-31T00:00:00+00:00",
+      "current": "2022-11-09T00:00:00+00:00",
+      "classification": "TOKEN_SWAP_REDENOMINATION_REBRAND_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/ef40b40af1944bc9b399ad9c52861a04",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance announced the VIDT Datalink to VIDT DAO token swap, 1:10 redenomination and rebrand; existing spot pairs were delisted and new VIDT trading reopened on 2022-11-09.",
+      "requires_episode_split": true
     }
   ]
 }
