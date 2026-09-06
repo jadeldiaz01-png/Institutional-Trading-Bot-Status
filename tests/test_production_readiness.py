@@ -24,16 +24,23 @@ def frozen_dataset():
 
 
 def pass_domain(name: str, commit: str):
+    digest = "c" * 64
     return {
         "status": "PASS",
         "items": [{
             "status": "PASS",
             "artifact": f"{name}.json",
-            "sha256": "c" * 64,
+            "sha256": digest,
             "source_commit_sha": commit,
             "issuer": f"{name}-certifier",
             "verification": "VERIFIED",
-            "provenance": {"required": True, "verified": True, "attestation_subject_digest": "sha256:" + "c" * 64},
+            "provenance": {
+                "required": True,
+                "verified": True,
+                "attestation_subject_digest": "sha256:" + digest,
+                "issuer": "https://token.actions.githubusercontent.com",
+                "identity": f"repo:jadeldiaz01-png/Institutional-Trading-Bot-Status:{name}",
+            },
         }],
     }
 
@@ -86,6 +93,15 @@ def test_commit_mismatch_invalidates_domain():
     r = evaluate_readiness(source_commit_sha=commit, dataset_certificate=frozen_dataset(), evidence=ev)
     assert r.manifest["evidence"]["execution"]["status"] == "FAIL"
     assert "item_0:source_commit_mismatch" in r.manifest["evidence"]["execution"]["validation_reasons"]
+
+
+def test_provenance_digest_mismatch_invalidates_domain():
+    commit = "b" * 40
+    ev = {d: pass_domain(d, commit) for d in REQUIRED_DOMAINS}
+    ev["supply_chain"]["items"][0]["provenance"]["attestation_subject_digest"] = "sha256:" + "f" * 64
+    r = evaluate_readiness(source_commit_sha=commit, dataset_certificate=frozen_dataset(), evidence=ev)
+    assert r.manifest["evidence"]["supply_chain"]["status"] == "FAIL"
+    assert "item_0:attestation_subject_digest_mismatch" in r.manifest["evidence"]["supply_chain"]["validation_reasons"]
 
 
 def test_all_pass_gates_without_domains_still_no_go():
