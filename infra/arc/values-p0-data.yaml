@@ -1,0 +1,36 @@
+githubConfigUrl: https://github.com/jadeldiaz01-png/Institutional-Trading-Bot-Status
+
+githubConfigSecret: github-arc-app
+
+runnerScaleSetName: p0-data-certifier
+
+minRunners: 0
+maxRunners: 1
+
+containerMode:
+  type: dind
+
+template:
+  spec:
+    serviceAccountName: p0-data-certifier
+    securityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+      - name: runner
+        image: ghcr.io/actions/actions-runner:latest
+        command: ["/home/runner/run.sh"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+            ephemeral-storage: 20Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+            ephemeral-storage: 80Gi
