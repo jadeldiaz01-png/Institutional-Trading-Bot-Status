@@ -183,36 +183,56 @@ def reconstruct_month_from_daily(
     return out, source_digest, sources
 
 
+def _contiguous_day_runs(days: pd.DatetimeIndex) -> list[pd.DatetimeIndex]:
+    if days.empty:
+        return []
+    runs: list[list[pd.Timestamp]] = [[days[0]]]
+    for day in days[1:]:
+        if day - runs[-1][-1] == pd.Timedelta(days=1):
+            runs[-1].append(day)
+        else:
+            runs.append([day])
+    return [pd.DatetimeIndex(run) for run in runs]
+
+
 def recover_internal_gaps_from_daily(
     frame: pd.DataFrame,
     symbol: str,
     *,
+    expected_start: pd.Timestamp | None = None,
+    expected_end: pd.Timestamp | None = None,
     timeout: int = 60,
 ) -> tuple[pd.DataFrame, list[dict]]:
-    """Repair only fully recoverable internal calendar gaps with official daily archives.
+    """Repair checksum-valid monthly archives only when every missing daily source verifies.
 
-    A monthly ZIP may itself be checksum-valid while omitting one or more daily
-    candles. For each internal gap we probe the exact missing Binance Vision 1d
-    keys. Every missing day must exist, pass its .CHECKSUM, contain exactly one
-    row, and carry the expected UTC day. If any day fails, no rows from that gap
-    are added. There is never interpolation, forward filling, or partial repair.
+    Coverage is evaluated against lifecycle-bounded expected month limits, not only
+    between rows already present in the monthly ZIP. This detects internal, leading,
+    and trailing gaps, including cross-month gaps where the next observed candle is
+    stored in the following monthly archive. A gap is repaired atomically: every
+    missing daily ZIP must exist, pass its CHECKSUM, contain exactly one row, and
+    carry the expected UTC date. Partial repair and imputation are forbidden.
     """
     working = frame.sort_values("timestamp").reset_index(drop=True).copy()
-    repairs: list[dict] = []
-    timestamps = pd.DatetimeIndex(pd.to_datetime(working["timestamp"], utc=True))
+    observed = pd.DatetimeIndex(pd.to_datetime(working["timestamp"], utc=True).dt.normalize())
+    if observed.empty:
+        return working, []
 
-    for previous, current in zip(timestamps[:-1], timestamps[1:]):
-        delta = current - previous
-        if delta <= pd.Timedelta(days=1):
-            continue
-        missing_days = pd.date_range(
-            previous.normalize() + pd.Timedelta(days=1),
-            current.normalize() - pd.Timedelta(days=1),
-            freq="D",
-            tz="UTC",
-        )
-        if missing_days.empty:
-            continue
+    start = _utc_day(expected_start) if expected_start is not None else observed.min()
+    end = _utc_day(expected_end) if expected_end is not None else observed.max()
+    if end < start:
+        raise ValueError(f"invalid recovery bounds for {symbol}: {start} > {end}")
+
+    expected_days = pd.date_range(start, end, freq="D", tz="UTC")
+    missing = expected_days.difference(observed)
+    repairs: list[dict] = []
+
+    for missing_days in _contiguous_day_runs(missing):
+        first_missing = missing_days[0]
+        last_missing = missing_days[-1]
+        before = observed[observed < first_missing]
+        after = observed[observed > last_missing]
+        previous = before.max() if len(before) else first_missing - pd.Timedelta(days=1)
+        current = after.min() if len(after) else last_missing + pd.Timedelta(days=1)
 
         gap_frames: list[pd.DataFrame] = []
         sources: list[dict] = []
@@ -224,22 +244,21 @@ def recover_internal_gaps_from_daily(
                 daily, digest = _download_verified_zip(key, timeout=timeout)
                 if len(daily) != 1:
                     raise ValueError(f"daily 1d archive must contain exactly one row: {key}: {len(daily)}")
-                observed = pd.Timestamp(daily["timestamp"].iloc[0])
-                observed = observed.tz_localize("UTC") if observed.tzinfo is None else observed.tz_convert("UTC")
-                if observed.normalize() != day:
-                    raise ValueError(f"daily archive date mismatch: {key}: {observed.isoformat()}")
+                observed_day = pd.Timestamp(daily["timestamp"].iloc[0])
+                observed_day = observed_day.tz_localize("UTC") if observed_day.tzinfo is None else observed_day.tz_convert("UTC")
+                if observed_day.normalize() != day:
+                    raise ValueError(f"daily archive date mismatch: {key}: {observed_day.isoformat()}")
                 gap_frames.append(daily)
                 sources.append({"key": key, "sha256": digest})
             except Exception as exc:
-                errors.append({
-                    "key": key,
-                    "error": f"{type(exc).__name__}:{exc}",
-                })
+                errors.append({"key": key, "error": f"{type(exc).__name__}:{exc}"})
 
         base = {
             "symbol": symbol,
             "previous": previous.isoformat(),
             "current": current.isoformat(),
+            "expected_start": start.isoformat(),
+            "expected_end": end.isoformat(),
             "missing_days": [d.date().isoformat() for d in missing_days],
         }
         if errors or len(gap_frames) != len(missing_days):
@@ -254,8 +273,8 @@ def recover_internal_gaps_from_daily(
             continue
 
         recovered = pd.concat(gap_frames, ignore_index=True).sort_values("timestamp")
-        actual_days = pd.DatetimeIndex(pd.to_datetime(recovered["timestamp"], utc=True).dt.normalize())
-        if not actual_days.equals(missing_days):
+        recovered_days = pd.DatetimeIndex(pd.to_datetime(recovered["timestamp"], utc=True).dt.normalize())
+        if not recovered_days.equals(missing_days):
             repairs.append({
                 **base,
                 "state": "UNRESOLVED",
@@ -273,7 +292,7 @@ def recover_internal_gaps_from_daily(
         repairs.append({
             **base,
             "state": "RESOLVED",
-            "resolution": "DAILY_CHECKSUM_VERIFIED_INTERNAL_GAP_RECOVERY",
+            "resolution": "DAILY_CHECKSUM_VERIFIED_MONTH_COVERAGE_RECOVERY",
             "recovered_day_count": len(missing_days),
             "sources": sources,
             "sources_sha256": canonical_sha256(sources),
@@ -368,7 +387,14 @@ def build_dataset(
         symbol, month = _key_symbol_month(key)
         try:
             frame, digest = parse_monthly_archive(key, timeout=timeout)
-            frame, internal_repairs = recover_internal_gaps_from_daily(frame, symbol, timeout=timeout)
+            start, end = key_bounds[key]
+            frame, internal_repairs = recover_internal_gaps_from_daily(
+                frame,
+                symbol,
+                expected_start=start,
+                expected_end=end,
+                timeout=timeout,
+            )
             resolved_sources = [
                 source
                 for repair in internal_repairs
