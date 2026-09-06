@@ -49,8 +49,6 @@ def test_same_month_identity_break_creates_two_non_overlapping_episodes():
     assert old.episode_id == 1 and new.episode_id == 2
     assert old.episode_count == 2 and new.episode_count == 2
     assert old.delisted_at == "2023-02-16T00:00:00+00:00"
-    # February belongs only to the new economic identity; January is the last
-    # archive retained for the old identity.
     assert old.last_archive_month == "2023-01"
     assert new.first_archive_month == "2023-02"
     assert new.listed_at == "2023-02-22T00:00:00+00:00"
@@ -73,3 +71,35 @@ def test_non_authoritative_identity_break_is_not_applied():
     out = apply_identity_break_registry([_row()], reg)
     assert len(out) == 1
     assert out[0].episode_count == 1
+
+
+def test_authoritative_terminal_event_truncates_orphan_rows_without_new_episode():
+    row = _row("BCCUSDT")
+    row = VerifiedLifecycle(**{**row.__dict__, "listed_at": "2017-11-01T00:00:00+00:00"})
+    reg = {
+        "schema_version": "1.0.0",
+        "policy": {
+            "identity_break_must_split_lifecycle": True,
+            "same_identity_halt_may_resolve_gap": True,
+            "unknown_event_fails_closed": True,
+            "imputation_allowed": False,
+        },
+        "events": [{
+            "market_id": "BCCUSDT__E01",
+            "previous": "2018-11-15T00:00:00+00:00",
+            "current": "2018-11-20T00:00:00+00:00",
+            "classification": "HARD_FORK_TERMINAL_TICKER_IDENTITY_BREAK",
+            "source": "https://support.binance.com/official-bcc-fork",
+            "source_authority": "BINANCE_OFFICIAL",
+            "requires_episode_split": False,
+            "terminal_truncate": True,
+        }],
+    }
+    out = apply_identity_break_registry([row], reg)
+    assert len(out) == 1
+    terminal = out[0]
+    assert terminal.delisted_at == "2018-11-15T00:00:00+00:00"
+    assert terminal.last_archive_month == "2018-11"
+    assert terminal.active_currently is False
+    assert terminal.episode_count == 1
+    assert "BINANCE_OFFICIAL_TERMINAL_EVENT" in terminal.evidence_method
