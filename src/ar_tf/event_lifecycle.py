@@ -9,6 +9,9 @@ from .evidence_acquisition import canonical_sha256
 from .lifecycle_verifier import VerifiedLifecycle
 
 
+IDENTITY_BREAK_AUTHORITIES = frozenset({"BINANCE_OFFICIAL", "TOKEN_ISSUER_OFFICIAL"})
+
+
 def _symbol_from_market_id(market_id: str) -> str:
     if "__E" not in market_id:
         raise ValueError(f"invalid market_id: {market_id}")
@@ -29,23 +32,40 @@ def _previous_month(value: pd.Timestamp) -> pd.Timestamp:
     return first - pd.offsets.MonthBegin(1)
 
 
+def _identity_break_authoritative(event: dict) -> bool:
+    authority = event.get("source_authority")
+    if authority not in IDENTITY_BREAK_AUTHORITIES:
+        return False
+    if event.get("requires_episode_split") is not True:
+        return False
+    # Issuer evidence proves token identity/redenomination only. It may never be
+    # used to declare an exchange trading halt or to manufacture continuity.
+    if authority == "TOKEN_ISSUER_OFFICIAL":
+        classification = str(event.get("classification", ""))
+        if "IDENTITY_BREAK" not in classification:
+            return False
+        if event.get("resolution") != "SPLIT_LIFECYCLE_EPISODE":
+            return False
+        if not event.get("identity_event_source"):
+            return False
+    return True
+
+
 def apply_identity_break_registry(
     rows: Iterable[VerifiedLifecycle],
     registry: dict,
 ) -> list[VerifiedLifecycle]:
     """Apply authoritative lifecycle identity evidence without manufacturing continuity.
 
-    Two transformations are allowed and both require BINANCE_OFFICIAL evidence:
+    Terminal exchange/ticker events require ``BINANCE_OFFICIAL`` evidence.
+    Identity breaks may be established by Binance or the official token issuer,
+    because the issuer is authoritative for an on-chain/token redenomination.
+    Issuer evidence is never sufficient to classify a Binance trading halt.
 
-    * ``terminal_truncate``: an old ticker/market is authoritatively terminated.
-      The lifecycle ends at the last legitimate pre-event candle and any later
-      orphan/stale archive rows are excluded by the dataset boundary filter.
-    * ``requires_episode_split``: the same ticker resumes after a swap,
-      redenomination, fork or identity change. Pre/post event observations are
-      distinct economic episodes and no return may cross the boundary.
-
-    No conversion ratio is applied to returns and no candles are imputed.
-    Unknown or non-authoritative events remain blocking in dataset certification.
+    Every identity break is split into distinct economic episodes. No conversion
+    ratio is applied to returns and no candle is imputed. For same-month breaks,
+    the pre-break partial month is conservatively dropped so a monthly source ZIP
+    can never contribute observations to both sides of the identity boundary.
     """
     policy = registry.get("policy", {})
     if policy.get("identity_break_must_split_lifecycle") is not True:
@@ -95,9 +115,8 @@ def apply_identity_break_registry(
 
     split_events = [
         event for event in registry.get("events", [])
-        if event.get("requires_episode_split") is True
-        and event.get("terminal_truncate") is not True
-        and event.get("source_authority") == "BINANCE_OFFICIAL"
+        if event.get("terminal_truncate") is not True
+        and _identity_break_authoritative(event)
     ]
     split_events.sort(key=lambda e: (_symbol_from_market_id(str(e["market_id"])), str(e["current"])))
 
@@ -127,16 +146,20 @@ def apply_identity_break_registry(
         if old_archive_end.strftime("%Y-%m") < str(row.first_archive_month):
             raise ValueError(f"identity break leaves no pre-break archive month for {symbol}")
 
+        authority = str(event["source_authority"])
+        method_authority = authority.replace("_OFFICIAL", "_OFFICIAL_IDENTITY_BREAK")
+        evidence_url = str(event.get("identity_event_source") or event["source"])
+
         old = replace(
             row,
             delisted_at=previous.isoformat(),
-            delisting_evidence_url=str(event["source"]),
+            delisting_evidence_url=evidence_url,
             delisting_status="VERIFIED",
             active_currently=False,
             last_archive_month=old_archive_end.strftime("%Y-%m"),
             archive_month_count=_month_count(_ts(row.listed_at), old_archive_end),
             evidence_method=(
-                f"BINANCE_VISION_CHECKSUM_VERIFIED+BINANCE_OFFICIAL_IDENTITY_BREAK:"
+                f"BINANCE_VISION_CHECKSUM_VERIFIED+{method_authority}:"
                 f"{event['classification']}:{registry_sha}:"
                 f"SAME_MONTH_PREBREAK_PARTIAL_DROPPED={str(same_month).lower()}"
             ),
@@ -146,13 +169,13 @@ def apply_identity_break_registry(
         new = replace(
             row,
             listed_at=resumed.isoformat(),
-            listing_evidence_url=str(event["source"]),
+            listing_evidence_url=evidence_url,
             listing_status="VERIFIED",
             first_archive_month=resumed.strftime("%Y-%m"),
             last_archive_month=(new_end.strftime("%Y-%m") if new_end is not None else row.last_archive_month),
             archive_month_count=_month_count(resumed, last_month_anchor),
             evidence_method=(
-                f"BINANCE_VISION_CHECKSUM_VERIFIED+BINANCE_OFFICIAL_IDENTITY_BREAK:"
+                f"BINANCE_VISION_CHECKSUM_VERIFIED+{method_authority}:"
                 f"{event['classification']}:{registry_sha}:"
                 f"SAME_MONTH_PREBREAK_PARTIAL_DROPPED={str(same_month).lower()}"
             ),
