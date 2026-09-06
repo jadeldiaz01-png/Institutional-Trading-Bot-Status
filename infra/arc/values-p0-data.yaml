@@ -7,9 +7,6 @@ runnerScaleSetName: p0-data-certifier
 minRunners: 0
 maxRunners: 1
 
-containerMode:
-  type: dind
-
 template:
   spec:
     serviceAccountName: p0-data-certifier
