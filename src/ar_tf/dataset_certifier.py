@@ -14,10 +14,12 @@ import pandas as pd
 
 from . import historical_dataset as hd
 from .evidence_acquisition import canonical_sha256
+from .gap_evidence import classify_gap_report, load_registry
 from .lifecycle_verifier import _timestamp_unit, file_sha256
 
 _LOCK = threading.Lock()
 _ANOMALIES: list[dict] = []
+DEFAULT_EVENT_REGISTRY = "config/ar_tf_market_event_registry_2026.json"
 
 
 def _row_sha256(row: list[str]) -> str:
@@ -31,12 +33,7 @@ def _record(entry: dict) -> None:
 
 
 def _parse_reconciled_zip(payload: bytes, key: str, source_sha256: str) -> pd.DataFrame:
-    """Parse a Binance Vision kline ZIP with deterministic duplicate reconciliation.
-
-    Duplicate timestamps are accepted only when every original CSV field is exactly
-    identical. Conflicting duplicates remain fail-closed. The decision is recorded
-    in a deterministic anomaly ledger bound to the source ZIP checksum.
-    """
+    """Parse a Binance Vision kline ZIP with deterministic duplicate reconciliation."""
     with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         names = archive.namelist()
         if len(names) != 1:
@@ -179,7 +176,7 @@ def _checksum_report(manifest: dict) -> dict:
     daily_verified = 0
     for archive in manifest["archives"]:
         digest = str(archive.get("sha256", ""))
-        if len(digest) != 64:
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
             invalid.append({"key": archive.get("key"), "reason": "invalid_archive_digest"})
         if archive.get("source_mode") == "MONTHLY_CHECKSUM_VERIFIED":
             monthly_verified += 1
@@ -189,7 +186,8 @@ def _checksum_report(manifest: dict) -> dict:
     for reconstruction in manifest.get("reconstructions", []):
         for source in reconstruction.get("daily_sources", []):
             daily_verified += 1
-            if len(str(source.get("sha256", ""))) != 64:
+            digest = str(source.get("sha256", ""))
+            if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
                 invalid.append({"key": source.get("key"), "reason": "invalid_daily_digest"})
 
     return {
@@ -204,16 +202,26 @@ def _checksum_report(manifest: dict) -> dict:
     }
 
 
-def certify_dataset(evidence_dir: str | Path, output_dir: str | Path, *, workers: int = 16, timeout: int = 60) -> dict:
+def _source_plan_hashes(path: Path) -> tuple[str, str]:
+    """Return semantic and byte-level identities for archive-observations.json."""
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return canonical_sha256(value), file_sha256(path)
+
+
+def certify_dataset(
+    evidence_dir: str | Path,
+    output_dir: str | Path,
+    *,
+    workers: int = 16,
+    timeout: int = 60,
+    market_event_registry: str | Path = DEFAULT_EVENT_REGISTRY,
+) -> dict:
     global _ANOMALIES
     _ANOMALIES = []
     evidence = Path(evidence_dir)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Patch only the verified ZIP parser/downloader. The historical planning,
-    # lifecycle boundaries, source selection and dataset construction remain in
-    # v1-D2 and therefore retain their existing provenance contract.
     original_download = hd._download_verified_zip
     try:
         hd._download_verified_zip = _download_reconciled_zip
@@ -236,7 +244,12 @@ def certify_dataset(evidence_dir: str | Path, output_dir: str | Path, *, workers
     anomaly_path = out / "reconciliation-ledger.json"
     anomaly_path.write_text(json.dumps(anomaly_ledger, indent=2, sort_keys=True), encoding="utf-8")
 
-    gaps = _gap_report(out, manifest)
+    raw_gaps = _gap_report(out, manifest)
+    registry = load_registry(market_event_registry)
+    gaps = classify_gap_report(raw_gaps, registry)
+    gaps["market_episode_count"] = raw_gaps["market_episode_count"]
+    gaps["checked_rows"] = raw_gaps["checked_rows"]
+    gaps["raw_observed_gap_count"] = len(raw_gaps["events"])
     gap_path = out / "gap-report.json"
     gap_path.write_text(json.dumps(gaps, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -247,25 +260,31 @@ def certify_dataset(evidence_dir: str | Path, output_dir: str | Path, *, workers
     lifecycle_sha = file_sha256(evidence / "verified-lifecycle.csv")
     manifest_path = out / "dataset-manifest.json"
     manifest_sha = file_sha256(manifest_path)
-    source_plan_sha = file_sha256(evidence / "archive-observations.json")
+    source_plan_sha, source_plan_file_sha = _source_plan_hashes(evidence / "archive-observations.json")
     unresolved_count = (
         anomaly_ledger["unresolved_count"]
         + gaps["unresolved_gap_count"]
         + checksums["invalid_checksum_evidence_count"]
     )
-    if lifecycle_sha != manifest["verified_lifecycle_sha256"]:
+    lifecycle_binding_ok = lifecycle_sha == manifest["verified_lifecycle_sha256"]
+    source_plan_binding_ok = source_plan_sha == manifest["archive_observations_sha256"]
+    if not lifecycle_binding_ok:
         unresolved_count += 1
-    if source_plan_sha != manifest["archive_observations_sha256"]:
+    if not source_plan_binding_ok:
         unresolved_count += 1
 
     certificate = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "decision": "FROZEN_DATASET" if unresolved_count == 0 else "NO_GO",
         "dataset_id": manifest["dataset_id"],
         "dataset_sha256": manifest["dataset_sha256"],
         "dataset_manifest_sha256": manifest_sha,
         "verified_lifecycle_sha256": lifecycle_sha,
+        "lifecycle_binding_verified": lifecycle_binding_ok,
         "source_plan_sha256": source_plan_sha,
+        "source_plan_file_sha256": source_plan_file_sha,
+        "source_plan_binding_verified": source_plan_binding_ok,
+        "market_event_registry_sha256": canonical_sha256(registry),
         "reconciliation_ledger_sha256": file_sha256(anomaly_path),
         "gap_report_sha256": file_sha256(gap_path),
         "checksum_report_sha256": file_sha256(checksum_path),
@@ -276,6 +295,8 @@ def certify_dataset(evidence_dir: str | Path, output_dir: str | Path, *, workers
         "historical_symbol_count": manifest["historical_symbol_count"],
         "resolved_anomaly_count": anomaly_ledger["resolved_count"],
         "unresolved_anomaly_count": anomaly_ledger["unresolved_count"],
+        "observed_gap_count": gaps["observed_gap_count"],
+        "resolved_gap_count": gaps["resolved_gap_count"],
         "unresolved_gap_count": gaps["unresolved_gap_count"],
         "invalid_checksum_evidence_count": checksums["invalid_checksum_evidence_count"],
         "unresolved_count": unresolved_count,
@@ -284,6 +305,7 @@ def certify_dataset(evidence_dir: str | Path, output_dir: str | Path, *, workers
         "holdout_evaluated": False,
         "paper_authorized": False,
         "testnet_authorized": False,
+        "shadow_authorized": False,
         "live_authorized": False,
     }
     cert_path = out / "dataset-freeze-certificate.json"
@@ -301,6 +323,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Certify and freeze AR-TF v1-D2 historical dataset")
     parser.add_argument("--evidence-dir", required=True)
     parser.add_argument("--output-dir", default="artifacts/ar_tf_v1d2_dataset")
+    parser.add_argument("--market-event-registry", default=DEFAULT_EVENT_REGISTRY)
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
@@ -309,6 +332,7 @@ def main() -> None:
         args.output_dir,
         workers=args.workers,
         timeout=args.timeout,
+        market_event_registry=args.market_event_registry,
     )
     print(json.dumps(certificate, indent=2, sort_keys=True))
 
