@@ -42,6 +42,28 @@
       "requires_episode_split": true
     },
     {
+      "market_id": "BTCSTUSDT__E01",
+      "previous": "2021-03-15T00:00:00+00:00",
+      "current": "2021-03-19T00:00:00+00:00",
+      "classification": "TOKEN_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/2c08ba9e1a1b409fb6a4a2cb2f5ed58b",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance halted BTCST spot trading on 2021-03-15 for a 1:10 redenomination, replaced old BTCST with new BTCST under the same ticker, and reopened BTCST/USDT on 2021-03-19; returns must not cross the identity break.",
+      "requires_episode_split": true
+    },
+    {
+      "market_id": "COCOSUSDT__E01",
+      "previous": "2021-01-19T00:00:00+00:00",
+      "current": "2021-01-23T00:00:00+00:00",
+      "classification": "TOKEN_REDENOMINATION_IDENTITY_BREAK",
+      "resolution": "SPLIT_LIFECYCLE_EPISODE",
+      "source": "https://www.binance.com/en/support/announcement/detail/f555f8013eff42bc9c91eaa48b9da24b",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance halted COCOS spot trading on 2021-01-19, swapped old COCOS into new COCOS at 1,000:1 under the same ticker, and reopened COCOS/USDT on 2021-01-23; returns must not cross the identity break.",
+      "requires_episode_split": true
+    },
+    {
       "market_id": "DREPUSDT__E01",
       "previous": "2021-03-29T00:00:00+00:00",
       "current": "2021-04-02T00:00:00+00:00",
