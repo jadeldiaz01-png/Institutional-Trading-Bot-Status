@@ -91,10 +91,35 @@ def test_checksum_report_requires_real_hex_digest_not_only_length():
         "archive_count": 1,
         "archives": [{"key": "x", "sha256": "z" * 64, "source_mode": "MONTHLY_CHECKSUM_VERIFIED"}],
         "reconstructions": [],
+        "internal_gap_repairs": [],
     }
     report = dc._checksum_report(manifest)
     assert report["all_source_checksums_verified"] is False
     assert report["invalid_checksum_evidence_count"] == 1
+
+
+def test_checksum_report_audits_resolved_internal_gap_daily_sources():
+    manifest = {
+        "archive_count": 1,
+        "archives": [{
+            "key": "monthly",
+            "sha256": "a" * 64,
+            "source_mode": "MONTHLY_CHECKSUM_VERIFIED_WITH_DAILY_GAP_RECOVERY",
+        }],
+        "reconstructions": [],
+        "internal_gap_repairs": [{
+            "state": "RESOLVED",
+            "sources": [
+                {"key": "daily-good", "sha256": "b" * 64},
+                {"key": "daily-bad", "sha256": "not-a-valid-sha"},
+            ],
+        }],
+    }
+    report = dc._checksum_report(manifest)
+    assert report["monthly_checksum_verified_count"] == 1
+    assert report["internal_gap_daily_checksum_verified_source_count"] == 2
+    assert report["invalid_checksum_evidence_count"] == 1
+    assert report["all_source_checksums_verified"] is False
 
 
 def test_source_plan_semantic_hash_is_serialization_independent(tmp_path):
