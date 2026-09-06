@@ -19,7 +19,7 @@ def _row(symbol: str, listed_at: str, delisted_at: str, first_month: str, last_m
         listed_at=listed_at,
         delisted_at=delisted_at,
         listing_evidence_url="https://data.binance.vision/first.zip",
-        delisting_evidence_url="https://www.binance.com/official-delisting",
+        delisting_evidence_url="https://data.binance.vision/last.zip",
         listing_status="VERIFIED",
         delisting_status="VERIFIED",
         active_currently=False,
@@ -37,12 +37,6 @@ def _registry() -> dict:
 
 
 def _isolated_registry(registry: dict, market_id: str) -> dict:
-    """Keep production policy intact while isolating the event under unit test.
-
-    apply_identity_break_registry intentionally applies every authoritative event
-    present in the registry. A single-symbol fixture therefore must not include
-    unrelated BCC/BNX/etc events that have no corresponding lifecycle row.
-    """
     return {
         "schema_version": registry["schema_version"],
         "policy": dict(registry["policy"]),
@@ -67,7 +61,7 @@ def _isolated_registry(registry: dict, market_id: str) -> dict:
             "COCOSUSDT",
             "2021-01-19T00:00:00+00:00",
             "2021-01-23T00:00:00+00:00",
-            "1,000:1",
+            "1000:1",
             "2019-08-21T00:00:00+00:00",
             "2023-05-29T00:00:00+00:00",
             "2019-08",
@@ -75,7 +69,7 @@ def _isolated_registry(registry: dict, market_id: str) -> dict:
         ),
     ],
 )
-def test_authoritative_redenomination_registry_splits_same_ticker_lifecycle(
+def test_issuer_authoritative_redenomination_splits_same_ticker_lifecycle(
     symbol,
     previous,
     current,
@@ -92,8 +86,9 @@ def test_authoritative_redenomination_registry_splits_same_ticker_lifecycle(
     event = events[0]
     assert event["previous"] == previous
     assert event["current"] == current
-    assert event["source_authority"] == "BINANCE_OFFICIAL"
-    assert event["source"].startswith("https://www.binance.com/")
+    assert event["source_authority"] == "TOKEN_ISSUER_OFFICIAL"
+    assert event["identity_event_source"] == event["source"]
+    assert event["observed_gap_boundary_source"] == "BINANCE_VISION_CHECKSUM_VERIFIED_1D"
     assert event["requires_episode_split"] is True
     assert event["resolution"] == "SPLIT_LIFECYCLE_EPISODE"
     assert ratio_marker in event["evidence"]
@@ -109,9 +104,36 @@ def test_authoritative_redenomination_registry_splits_same_ticker_lifecycle(
     assert old.delisted_at == previous
     assert new.listed_at == current
     assert old.last_archive_month < new.first_archive_month
-    assert "BINANCE_OFFICIAL_IDENTITY_BREAK" in old.evidence_method
+    assert "TOKEN_ISSUER_OFFICIAL_IDENTITY_BREAK" in old.evidence_method
     assert "SAME_MONTH_PREBREAK_PARTIAL_DROPPED=true" in old.evidence_method
     assert "SAME_MONTH_PREBREAK_PARTIAL_DROPPED=true" in new.evidence_method
+
+
+def test_token_issuer_cannot_authorize_exchange_halt_or_unsplit_event():
+    registry = _registry()
+    bad = {
+        "schema_version": registry["schema_version"],
+        "policy": dict(registry["policy"]),
+        "events": [{
+            "market_id": "BTCSTUSDT__E01",
+            "previous": "2021-03-15T00:00:00+00:00",
+            "current": "2021-03-19T00:00:00+00:00",
+            "classification": "SAME_IDENTITY_TRADING_HALT",
+            "resolution": "EXPECTED_NO_TRADING_INTERVAL",
+            "source": "https://btcst.medium.com/official",
+            "identity_event_source": "https://btcst.medium.com/official",
+            "source_authority": "TOKEN_ISSUER_OFFICIAL",
+            "requires_episode_split": False,
+        }],
+    }
+    row = _row(
+        "BTCSTUSDT", "2021-01-13T00:00:00+00:00", "2022-11-28T00:00:00+00:00", "2021-01", "2022-11"
+    )
+    out = apply_identity_break_registry([row], bad)
+    assert len(out) == 1
+    assert out[0].episode_count == 1
+    assert out[0].listed_at == row.listed_at
+    assert out[0].delisted_at == row.delisted_at
 
 
 def test_registry_still_forbids_imputation_and_unknown_event_assumption():
