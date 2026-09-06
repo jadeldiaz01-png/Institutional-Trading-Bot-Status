@@ -47,7 +47,7 @@ def _read_with_retry(url: str, *, timeout: int = 60, attempts: int = 4) -> bytes
     last: Exception | None = None
     for attempt in range(attempts):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-dataset/1.1"})
+            req = urllib.request.Request(url, headers={"User-Agent": "AR-TF-dataset/1.2"})
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 return response.read()
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
@@ -183,6 +183,106 @@ def reconstruct_month_from_daily(
     return out, source_digest, sources
 
 
+def recover_internal_gaps_from_daily(
+    frame: pd.DataFrame,
+    symbol: str,
+    *,
+    timeout: int = 60,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Repair only fully recoverable internal calendar gaps with official daily archives.
+
+    A monthly ZIP may itself be checksum-valid while omitting one or more daily
+    candles. For each internal gap we probe the exact missing Binance Vision 1d
+    keys. Every missing day must exist, pass its .CHECKSUM, contain exactly one
+    row, and carry the expected UTC day. If any day fails, no rows from that gap
+    are added. There is never interpolation, forward filling, or partial repair.
+    """
+    working = frame.sort_values("timestamp").reset_index(drop=True).copy()
+    repairs: list[dict] = []
+    timestamps = pd.DatetimeIndex(pd.to_datetime(working["timestamp"], utc=True))
+
+    for previous, current in zip(timestamps[:-1], timestamps[1:]):
+        delta = current - previous
+        if delta <= pd.Timedelta(days=1):
+            continue
+        missing_days = pd.date_range(
+            previous.normalize() + pd.Timedelta(days=1),
+            current.normalize() - pd.Timedelta(days=1),
+            freq="D",
+            tz="UTC",
+        )
+        if missing_days.empty:
+            continue
+
+        gap_frames: list[pd.DataFrame] = []
+        sources: list[dict] = []
+        errors: list[dict] = []
+        for day in missing_days:
+            day_text = day.strftime("%Y-%m-%d")
+            key = f"data/spot/daily/klines/{symbol}/1d/{symbol}-1d-{day_text}.zip"
+            try:
+                daily, digest = _download_verified_zip(key, timeout=timeout)
+                if len(daily) != 1:
+                    raise ValueError(f"daily 1d archive must contain exactly one row: {key}: {len(daily)}")
+                observed = pd.Timestamp(daily["timestamp"].iloc[0])
+                observed = observed.tz_localize("UTC") if observed.tzinfo is None else observed.tz_convert("UTC")
+                if observed.normalize() != day:
+                    raise ValueError(f"daily archive date mismatch: {key}: {observed.isoformat()}")
+                gap_frames.append(daily)
+                sources.append({"key": key, "sha256": digest})
+            except Exception as exc:
+                errors.append({
+                    "key": key,
+                    "error": f"{type(exc).__name__}:{exc}",
+                })
+
+        base = {
+            "symbol": symbol,
+            "previous": previous.isoformat(),
+            "current": current.isoformat(),
+            "missing_days": [d.date().isoformat() for d in missing_days],
+        }
+        if errors or len(gap_frames) != len(missing_days):
+            repairs.append({
+                **base,
+                "state": "UNRESOLVED",
+                "resolution": "DAILY_ARCHIVE_COVERAGE_INCOMPLETE_FAIL_CLOSED",
+                "sources": sources,
+                "sources_sha256": canonical_sha256(sources),
+                "errors": errors,
+            })
+            continue
+
+        recovered = pd.concat(gap_frames, ignore_index=True).sort_values("timestamp")
+        actual_days = pd.DatetimeIndex(pd.to_datetime(recovered["timestamp"], utc=True).dt.normalize())
+        if not actual_days.equals(missing_days):
+            repairs.append({
+                **base,
+                "state": "UNRESOLVED",
+                "resolution": "DAILY_ARCHIVE_DATE_SET_MISMATCH_FAIL_CLOSED",
+                "sources": sources,
+                "sources_sha256": canonical_sha256(sources),
+                "errors": [{"error": "recovered daily timestamps do not exactly match missing day set"}],
+            })
+            continue
+
+        candidate = pd.concat([working, recovered], ignore_index=True).sort_values("timestamp").reset_index(drop=True)
+        if candidate["timestamp"].duplicated().any():
+            raise ValueError(f"duplicate timestamp introduced by internal gap recovery: {symbol}")
+        working = candidate
+        repairs.append({
+            **base,
+            "state": "RESOLVED",
+            "resolution": "DAILY_CHECKSUM_VERIFIED_INTERNAL_GAP_RECOVERY",
+            "recovered_day_count": len(missing_days),
+            "sources": sources,
+            "sources_sha256": canonical_sha256(sources),
+            "errors": [],
+        })
+
+    return working.sort_values("timestamp").reset_index(drop=True), repairs
+
+
 def _episode_market_id(symbol: str, episode_id: int) -> str:
     return f"{symbol}__E{episode_id:02d}"
 
@@ -268,12 +368,24 @@ def build_dataset(
         symbol, month = _key_symbol_month(key)
         try:
             frame, digest = parse_monthly_archive(key, timeout=timeout)
+            frame, internal_repairs = recover_internal_gaps_from_daily(frame, symbol, timeout=timeout)
+            resolved_sources = [
+                source
+                for repair in internal_repairs
+                if repair["state"] == "RESOLVED"
+                for source in repair["sources"]
+            ]
+            repaired = any(repair["state"] == "RESOLVED" for repair in internal_repairs)
             return key, frame, digest, {
-                "source_mode": "MONTHLY_CHECKSUM_VERIFIED",
+                "source_mode": (
+                    "MONTHLY_CHECKSUM_VERIFIED_WITH_DAILY_GAP_RECOVERY"
+                    if repaired else "MONTHLY_CHECKSUM_VERIFIED"
+                ),
                 "monthly_failure": None,
-                "daily_source_count": 0,
-                "daily_sources_sha256": None,
-                "daily_sources": [],
+                "daily_source_count": len(resolved_sources),
+                "daily_sources_sha256": canonical_sha256(resolved_sources) if resolved_sources else None,
+                "daily_sources": resolved_sources,
+                "internal_gap_repairs": internal_repairs,
             }
         except Exception as monthly_exc:
             start, end = key_bounds[key]
@@ -286,6 +398,7 @@ def build_dataset(
                 "daily_source_count": len(sources),
                 "daily_sources_sha256": digest,
                 "daily_sources": sources,
+                "internal_gap_repairs": [],
             }
 
     fetched: dict[str, tuple[pd.DataFrame, str, dict]] = {}
@@ -306,6 +419,7 @@ def build_dataset(
     market_manifest: list[dict] = []
     archive_manifest: list[dict] = []
     reconstruction_manifest: list[dict] = []
+    internal_gap_repair_manifest: list[dict] = []
     for key in sorted(fetched):
         frame, digest, metadata = fetched[key]
         symbol, month = _key_symbol_month(key)
@@ -331,6 +445,12 @@ def build_dataset(
                 "daily_source_count": metadata["daily_source_count"],
                 "daily_sources_sha256": metadata["daily_sources_sha256"],
                 "daily_sources": metadata["daily_sources"],
+            })
+        for repair in metadata.get("internal_gap_repairs", []):
+            internal_gap_repair_manifest.append({
+                "monthly_key": key,
+                "monthly_sha256": digest,
+                **repair,
             })
 
     market_dir = out / "market"
@@ -373,7 +493,7 @@ def build_dataset(
     ).encode("utf-8")
     dataset_sha = hashlib.sha256(aggregate_lines).hexdigest()
     manifest = {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "dataset_id": "ar-tf-binance-spot-usdt-1d-v1d2",
         "source": VISION_BASE,
         "point_in_time": True,
@@ -383,6 +503,9 @@ def build_dataset(
         "archive_count": len(archive_manifest),
         "reconstructed_archive_count": len(reconstruction_manifest),
         "reconstruction_manifest_sha256": canonical_sha256(reconstruction_manifest),
+        "internal_gap_repair_attempt_count": len(internal_gap_repair_manifest),
+        "internal_gap_repair_resolved_count": sum(x["state"] == "RESOLVED" for x in internal_gap_repair_manifest),
+        "internal_gap_repair_manifest_sha256": canonical_sha256(internal_gap_repair_manifest),
         "market_episode_count": len(market_manifest),
         "historical_symbol_count": len({x["symbol"] for x in market_manifest}),
         "excluded_no_1d_symbols": readiness.get("symbols_without_monthly_1d", []),
@@ -392,6 +515,7 @@ def build_dataset(
         "markets": market_manifest,
         "archives": archive_manifest,
         "reconstructions": reconstruction_manifest,
+        "internal_gap_repairs": internal_gap_repair_manifest,
         "holdout_evaluated": False,
         "paper_authorized": False,
     }
@@ -399,6 +523,9 @@ def build_dataset(
     (out / "dataset.sha256").write_text(dataset_sha + "  AR_TF_V1D2_DATASET\n", encoding="utf-8")
     (out / "daily-reconstructions.json").write_text(
         json.dumps(reconstruction_manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    (out / "internal-gap-repairs.json").write_text(
+        json.dumps(internal_gap_repair_manifest, indent=2, sort_keys=True), encoding="utf-8"
     )
     return manifest
 
@@ -416,6 +543,8 @@ def main() -> None:
         "dataset_sha256": manifest["dataset_sha256"],
         "archive_count": manifest["archive_count"],
         "reconstructed_archive_count": manifest["reconstructed_archive_count"],
+        "internal_gap_repair_attempt_count": manifest["internal_gap_repair_attempt_count"],
+        "internal_gap_repair_resolved_count": manifest["internal_gap_repair_resolved_count"],
         "market_episode_count": manifest["market_episode_count"],
         "historical_symbol_count": manifest["historical_symbol_count"],
         "holdout_evaluated": manifest["holdout_evaluated"],
