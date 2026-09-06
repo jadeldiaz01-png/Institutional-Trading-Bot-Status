@@ -1,3 +1,8 @@
+import json
+from pathlib import Path
+
+from jsonschema import Draft202012Validator
+
 from ar_tf.production_readiness import GATE_IDS, REQUIRED_DOMAINS, canonical_sha256, evaluate_readiness
 
 
@@ -28,20 +33,13 @@ def pass_domain(name: str, commit: str):
             "source_commit_sha": commit,
             "issuer": f"{name}-certifier",
             "verification": "VERIFIED",
-            "provenance": {
-                "required": True,
-                "verified": True,
-                "attestation_subject_digest": "sha256:" + "c" * 64,
-            },
+            "provenance": {"required": True, "verified": True, "attestation_subject_digest": "sha256:" + "c" * 64},
         }],
     }
 
 
 def pass_gates():
-    return [
-        {"id": gid, "status": "PASS", "blocking": True, "evidence": [f"{gid}.json"], "blocker": None}
-        for gid in GATE_IDS
-    ]
+    return [{"id": gid, "status": "PASS", "blocking": True, "evidence": [f"{gid}.json"], "blocker": None} for gid in GATE_IDS]
 
 
 def test_missing_evidence_is_no_go_and_all_gates_blocked():
@@ -114,6 +112,13 @@ def test_holdout_closed_by_default_and_identities_explicit():
     assert r.manifest["identities"]["dataset_sha256"] == "a" * 64
     assert r.manifest["identities"]["lifecycle_sha256"] == "d" * 64
     assert "strategy_config_sha256" in r.manifest["identities"]
+
+
+def test_generated_manifest_matches_schema():
+    schema = json.loads(Path("schemas/production-readiness-manifest.schema.json").read_text(encoding="utf-8"))
+    manifest = evaluate_readiness(source_commit_sha="b" * 40).manifest
+    errors = sorted(Draft202012Validator(schema).iter_errors(manifest), key=lambda e: list(e.path))
+    assert errors == [], [e.message for e in errors]
 
 
 def test_hash_is_canonical():
