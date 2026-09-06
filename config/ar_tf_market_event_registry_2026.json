@@ -19,6 +19,18 @@
       "requires_episode_split": false
     },
     {
+      "market_id": "BCCUSDT__E01",
+      "previous": "2018-11-15T00:00:00+00:00",
+      "current": "2018-11-20T00:00:00+00:00",
+      "classification": "HARD_FORK_TERMINAL_TICKER_IDENTITY_BREAK",
+      "resolution": "TERMINATE_LIFECYCLE_AT_LAST_VALID_PRE_FORK_CANDLE",
+      "source": "https://support.binance.com/hc/en-us/articles/360019875411-Binance-Has-Distributed-Bitcoin-Cash-ABC-BCHABC-Bitcoin-Cash-SV-BCHSV-and-Will-Open-Trading",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance removed prior BCC balances and trading pairs after the 2018-11-15 Bitcoin Cash fork and distributed BCHABC/BCHSV; later BCC archive rows must not be treated as continuous tradability.",
+      "requires_episode_split": false,
+      "terminal_truncate": true
+    },
+    {
       "market_id": "BNXUSDT__E01",
       "previous": "2023-02-16T00:00:00+00:00",
       "current": "2023-02-22T00:00:00+00:00",
@@ -39,6 +51,18 @@
       "source_authority": "BINANCE_OFFICIAL",
       "evidence": "Binance halted DREP spot pairs for a 100:1 redenomination and reopened new DREP pairs on 2021-04-02.",
       "requires_episode_split": true
+    },
+    {
+      "market_id": "KEYUSDT__E01",
+      "previous": "2023-02-10T00:00:00+00:00",
+      "current": "2023-03-10T00:00:00+00:00",
+      "classification": "SAME_IDENTITY_TRADING_HALT",
+      "resolution": "EXPECTED_NO_TRADING_INTERVAL",
+      "source": "https://www.binance.com/en/support/announcement/detail/7ec33a2d62974c3490b92ff0780ba461",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance ceased KEY/USDT trading on 2023-02-10 03:00 UTC and later announced KEY/USDT trading reopening for 2023-03-10 08:00 UTC in official announcement id 8ef61bec1227429a910877be141c5af3.",
+      "corroborating_source": "https://www.binance.com/en/support/announcement/8ef61bec1227429a910877be141c5af3",
+      "requires_episode_split": false
     },
     {
       "market_id": "QUICKUSDT__E01",
