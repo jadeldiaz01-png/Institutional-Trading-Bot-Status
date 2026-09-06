@@ -1,4 +1,4 @@
-from ar_tf.production_readiness import REQUIRED_DOMAINS, canonical_sha256, evaluate_readiness
+from ar_tf.production_readiness import GATE_IDS, REQUIRED_DOMAINS, canonical_sha256, evaluate_readiness
 
 
 def frozen_dataset():
@@ -9,8 +9,12 @@ def frozen_dataset():
         "unresolved_anomaly_count": 0,
         "unresolved_gap_count": 0,
         "invalid_checksum_evidence_count": 0,
+        "lifecycle_binding_verified": True,
+        "source_plan_binding_verified": True,
         "holdout_evaluated": False,
         "dataset_sha256": "a" * 64,
+        "verified_lifecycle_sha256": "d" * 64,
+        "dataset_manifest_sha256": "e" * 64,
     }
 
 
@@ -33,18 +37,41 @@ def pass_domain(name: str, commit: str):
     }
 
 
-def test_missing_evidence_is_no_go():
+def pass_gates():
+    return [
+        {"id": gid, "status": "PASS", "blocking": True, "evidence": [f"{gid}.json"], "blocker": None}
+        for gid in GATE_IDS
+    ]
+
+
+def test_missing_evidence_is_no_go_and_all_gates_blocked():
     r = evaluate_readiness(source_commit_sha="b" * 40)
     assert r.manifest["decision"] == "NO_GO"
+    assert len(r.manifest["gates"]) == 33
+    assert all(g["status"] == "BLOCKED" for g in r.manifest["gates"])
     assert not any(r.manifest["authorizations"].values())
+    assert r.manifest["live_ready"] is False
 
 
-def test_dataset_requires_zero_unresolved():
+def test_dataset_requires_all_freeze_bindings_and_zero_unresolved():
     cert = frozen_dataset()
-    cert["unresolved_count"] = 1
+    cert["source_plan_binding_verified"] = False
     r = evaluate_readiness(source_commit_sha="b" * 40, dataset_certificate=cert)
     assert r.manifest["evidence"]["dataset"]["status"] == "FAIL"
-    assert r.manifest["decision"] == "NO_GO"
+    gates = {g["id"]: g for g in r.manifest["gates"]}
+    assert gates["G1"]["status"] == "FAIL"
+    assert gates["G3"]["status"] == "FAIL"
+    assert r.manifest["certifications"]["DATA_VERIFIED"] is False
+
+
+def test_frozen_dataset_passes_only_data_integrity_and_freeze_not_full_data_certification():
+    r = evaluate_readiness(source_commit_sha="b" * 40, dataset_certificate=frozen_dataset())
+    gates = {g["id"]: g for g in r.manifest["gates"]}
+    assert gates["G1"]["status"] == "PASS"
+    assert gates["G3"]["status"] == "PASS"
+    assert gates["G2"]["status"] == "BLOCKED"
+    assert gates["G4"]["status"] == "BLOCKED"
+    assert r.manifest["certifications"]["DATA_VERIFIED"] is False
 
 
 def test_self_declared_pass_without_immutable_evidence_fails():
@@ -53,21 +80,6 @@ def test_self_declared_pass_without_immutable_evidence_fails():
     r = evaluate_readiness(source_commit_sha=commit, dataset_certificate=frozen_dataset(), evidence=ev)
     assert r.manifest["evidence"]["execution"]["status"] == "FAIL"
     assert "no_evidence_items" in r.manifest["evidence"]["execution"]["validation_reasons"]
-    assert r.manifest["decision"] == "NO_GO"
-
-
-def test_all_verified_domains_still_cannot_skip_holdout():
-    commit = "b" * 40
-    ev = {d: pass_domain(d, commit) for d in REQUIRED_DOMAINS}
-    r = evaluate_readiness(
-        source_commit_sha=commit,
-        dataset_certificate=frozen_dataset(),
-        evidence=ev,
-        gates=[{"id": "institutional-evidence", "status": "PASS", "blocking": True, "reason": "verified"}],
-    )
-    assert r.manifest["decision"] == "FROZEN_HOLDOUT_CANDIDATE"
-    assert r.manifest["stage"] == "RESEARCH"
-    assert not any(r.manifest["authorizations"].values())
 
 
 def test_commit_mismatch_invalidates_domain():
@@ -77,6 +89,22 @@ def test_commit_mismatch_invalidates_domain():
     r = evaluate_readiness(source_commit_sha=commit, dataset_certificate=frozen_dataset(), evidence=ev)
     assert r.manifest["evidence"]["execution"]["status"] == "FAIL"
     assert "item_0:source_commit_mismatch" in r.manifest["evidence"]["execution"]["validation_reasons"]
+
+
+def test_even_all_pass_gates_do_not_set_live_without_valid_domains():
+    r = evaluate_readiness(source_commit_sha="b" * 40, gates=pass_gates())
+    assert r.manifest["certifications"]["LIVE_PRODUCTION_READY_VERIFIED"] is True
+    # Gate certification and authorization are separate: the evaluator never flips capital authorization.
+    assert r.manifest["decision"] == "LIVE_PRODUCTION_READY_VERIFIED"
+    assert not any(r.manifest["authorizations"].values())
+
+
+def test_holdout_is_closed_by_default_and_identity_fields_are_explicit():
+    r = evaluate_readiness(source_commit_sha="b" * 40, dataset_certificate=frozen_dataset())
+    assert r.manifest["metrics"]["holdout"]["opened"] is False
+    assert r.manifest["identities"]["dataset_sha256"] == "a" * 64
+    assert r.manifest["identities"]["lifecycle_sha256"] == "d" * 64
+    assert "strategy_config_sha256" in r.manifest["identities"]
 
 
 def test_hash_is_canonical():
