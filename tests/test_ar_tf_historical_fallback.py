@@ -83,3 +83,44 @@ def test_expected_bounds_use_lifecycle_boundary_dates():
     )
     assert start == pd.Timestamp("2024-10-05", tz="UTC")
     assert end == pd.Timestamp("2024-10-28", tz="UTC")
+
+
+def test_internal_gap_recovery_requires_exact_checksum_verified_coverage(monkeypatch):
+    monthly = pd.concat([_row("2022-09-11"), _row("2022-09-15")], ignore_index=True)
+
+    def fake_download(key, timeout=60):
+        day = key.rsplit("/", 1)[-1].replace("NBTUSDT-1d-", "").replace(".zip", "")
+        return _row(day), "d" * 64
+
+    monkeypatch.setattr(hd, "_download_verified_zip", fake_download)
+    repaired, ledger = hd.recover_internal_gaps_from_daily(monthly, "NBTUSDT")
+
+    assert list(repaired["timestamp"]) == list(pd.date_range("2022-09-11", "2022-09-15", freq="D", tz="UTC"))
+    assert len(ledger) == 1
+    assert ledger[0]["state"] == "RESOLVED"
+    assert ledger[0]["resolution"] == "DAILY_CHECKSUM_VERIFIED_INTERNAL_GAP_RECOVERY"
+    assert ledger[0]["recovered_day_count"] == 3
+    assert len(ledger[0]["sources"]) == 3
+    assert len(ledger[0]["sources_sha256"]) == 64
+
+
+def test_internal_gap_recovery_is_atomic_when_any_daily_archive_is_missing(monkeypatch):
+    monthly = pd.concat([_row("2022-09-11"), _row("2022-09-15")], ignore_index=True)
+
+    def fake_download(key, timeout=60):
+        day = key.rsplit("/", 1)[-1].replace("NBTUSDT-1d-", "").replace(".zip", "")
+        if day == "2022-09-13":
+            raise FileNotFoundError("official daily archive absent")
+        return _row(day), "e" * 64
+
+    monkeypatch.setattr(hd, "_download_verified_zip", fake_download)
+    repaired, ledger = hd.recover_internal_gaps_from_daily(monthly, "NBTUSDT")
+
+    assert list(repaired["timestamp"]) == [
+        pd.Timestamp("2022-09-11", tz="UTC"),
+        pd.Timestamp("2022-09-15", tz="UTC"),
+    ]
+    assert len(ledger) == 1
+    assert ledger[0]["state"] == "UNRESOLVED"
+    assert ledger[0]["resolution"] == "DAILY_ARCHIVE_COVERAGE_INCOMPLETE_FAIL_CLOSED"
+    assert any("2022-09-13" in entry["key"] for entry in ledger[0]["errors"])
