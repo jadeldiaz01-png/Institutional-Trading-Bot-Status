@@ -1,14 +1,14 @@
 # P0-DATA-001 — Cloudflare + Oracle/k3s/ARC runbook
 
 ## Objective
-Provide private administrative access, immutable-ish off-runner evidence retention, and ephemeral execution for the P0-DATA-001 dataset certifier without changing any quantitative authorization gate.
+Provide private administrative access, off-runner evidence retention, and ephemeral execution for the P0-DATA-001 dataset certifier without changing any quantitative authorization gate.
 
 ## Architecture
 - Oracle Cloud Always Free Ampere A1: single-node k3s research runtime.
 - GitHub Actions Runner Controller: `p0-data-certifier` ephemeral scale set (`minRunners=0`, `maxRunners=1`).
 - Cloudflare Tunnel: outbound-only connectivity from k3s. No Kubernetes API public exposure is required.
 - Cloudflare Zero Trust: operator access policy in front of private administrative routes.
-- Cloudflare R2 Standard: evidence/log retention target. Keep bucket private.
+- Cloudflare R2 Standard: private evidence/log retention target.
 
 ## Security invariants
 - Never commit Cloudflare tunnel tokens, R2 access keys, GitHub App keys, PATs, kubeconfig, exchange keys, or trading credentials.
@@ -29,6 +29,7 @@ Authentication material must be injected as a Kubernetes Secret and never stored
 Create a remotely managed tunnel in Cloudflare. Create its Kubernetes Secret without writing the token to a checked-in file:
 
 ```bash
+kubectl create namespace cloudflare-system --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n cloudflare-system create secret generic cloudflared-tunnel-token \
   --from-literal=token="$CLOUDFLARE_TUNNEL_TOKEN"
 kubectl apply -f infra/cloudflare/cloudflared-deployment.yaml
@@ -104,7 +105,7 @@ infra/cloudflare/upload-evidence-r2.sh artifacts/ar_tf_v1d2_dataset
 The uploader creates `SHA256SUMS` and writes under:
 `p0-data-001/<code_sha>/<run_id>/`.
 
-R2 retention strengthens durability but is not by itself proof of immutability. Production certification should add retention/lock governance or an independently signed evidence ledger.
+R2 retention strengthens durability but is not by itself proof of immutability. Production certification should add signed provenance/evidence ledger and retention governance.
 
 ## Failure policy
 Any failed identity, tunnel, ARC, runner lifecycle, checksum, dataset, or evidence-retention check leaves P0-DATA-001 in progress and global state `NO_GO`.
