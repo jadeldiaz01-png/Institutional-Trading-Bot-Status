@@ -98,7 +98,7 @@ def test_internal_gap_recovery_requires_exact_checksum_verified_coverage(monkeyp
     assert list(repaired["timestamp"]) == list(pd.date_range("2022-09-11", "2022-09-15", freq="D", tz="UTC"))
     assert len(ledger) == 1
     assert ledger[0]["state"] == "RESOLVED"
-    assert ledger[0]["resolution"] == "DAILY_CHECKSUM_VERIFIED_INTERNAL_GAP_RECOVERY"
+    assert ledger[0]["resolution"] == "DAILY_CHECKSUM_VERIFIED_MONTH_COVERAGE_RECOVERY"
     assert ledger[0]["recovered_day_count"] == 3
     assert len(ledger[0]["sources"]) == 3
     assert len(ledger[0]["sources_sha256"]) == 64
@@ -124,3 +124,31 @@ def test_internal_gap_recovery_is_atomic_when_any_daily_archive_is_missing(monke
     assert ledger[0]["state"] == "UNRESOLVED"
     assert ledger[0]["resolution"] == "DAILY_ARCHIVE_COVERAGE_INCOMPLETE_FAIL_CLOSED"
     assert any("2022-09-13" in entry["key"] for entry in ledger[0]["errors"])
+
+
+def test_trailing_month_gap_recovery_handles_cross_month_next_observation(monkeypatch):
+    monthly = _row("2022-09-11")
+
+    def fake_download(key, timeout=60):
+        day = key.rsplit("/", 1)[-1].replace("NBTUSDT-1d-", "").replace(".zip", "")
+        return _row(day), "f" * 64
+
+    monkeypatch.setattr(hd, "_download_verified_zip", fake_download)
+    repaired, ledger = hd.recover_internal_gaps_from_daily(
+        monthly,
+        "NBTUSDT",
+        expected_start=pd.Timestamp("2022-09-01", tz="UTC"),
+        expected_end=pd.Timestamp("2022-09-30", tz="UTC"),
+    )
+
+    # This test focuses on the trailing gap that previously escaped detection.
+    # Leading days are also lifecycle-bounded candidates and therefore recovered.
+    assert repaired["timestamp"].min() == pd.Timestamp("2022-09-01", tz="UTC")
+    assert repaired["timestamp"].max() == pd.Timestamp("2022-09-30", tz="UTC")
+    assert len(repaired) == 30
+    assert any(
+        entry["state"] == "RESOLVED"
+        and "2022-09-12" in entry["missing_days"]
+        and "2022-09-30" in entry["missing_days"]
+        for entry in ledger
+    )
