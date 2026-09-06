@@ -36,10 +36,46 @@ template:
           limits:
             cpu: "4000m"
             memory: "8Gi"
+      - name: tailscale
+        image: ghcr.io/tailscale/tailscale:latest
+        env:
+          - name: TS_AUTHKEY
+            valueFrom:
+              secretKeyRef:
+                name: tailscale-ephemeral
+                key: TS_AUTHKEY
+          - name: TS_USERSPACE
+            value: "true"
+          - name: TS_KUBE_SECRET
+            value: ""
+          - name: TS_STATE_DIR
+            value: "/tmp/tailscale"
+          - name: TS_HOSTNAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: TS_SOCKS5_SERVER
+            value: "localhost:1055"
+          - name: TS_OUTBOUND_HTTP_PROXY_LISTEN
+            value: "localhost:1055"
+          - name: TS_EXTRA_ARGS
+            value: "--advertise-tags=tag:ci-certifier --accept-dns=true"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+        volumeMounts:
+          - name: tailscale-state
+            mountPath: /tmp/tailscale
+    volumes:
+      - name: tailscale-state
+        emptyDir: {}
 
 # Security contract:
 # - GitHub App credentials live only in Kubernetes Secret trading-certifier-github-app.
+# - tailscale-ephemeral contains an ephemeral/pre-authorized auth key scoped to tag:ci-certifier.
 # - Do not commit PATs, App private keys, Tailscale auth keys, kubeconfigs, or exchange credentials.
 # - minRunners=0 ensures no idle runner is kept alive.
 # - maxRunners=1 bounds cost and concurrency during certification.
 # - Runner pods are single-job ephemeral resources managed by ARC.
+# - Tailscale uses userspace networking: no NET_ADMIN, no /dev/net/tun, no privileged container.
