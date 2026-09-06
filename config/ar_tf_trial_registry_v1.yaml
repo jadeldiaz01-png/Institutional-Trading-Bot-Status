@@ -2,9 +2,14 @@ version: 1
 state: PREREGISTRATION_TEMPLATE
 policy:
   execute_only_after_frozen_dataset: true
+  dataset_sha256_must_bind_registry: true
+  lifecycle_sha256_must_bind_registry: true
   count_all_attempts: true
   holdout_forbidden_during_selection: true
   no_profit_target_search: true
+  max_total_registered_trials: 500
+  family_budget_is_fixed_before_execution: true
+  expansion_requires_new_research_generation: true
 families:
   - family: time_series_momentum
     tier: BASELINE
