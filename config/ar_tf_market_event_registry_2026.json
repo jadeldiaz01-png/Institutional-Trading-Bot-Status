@@ -53,6 +53,30 @@
       "requires_episode_split": true
     },
     {
+      "market_id": "ETHBEARUSDT__E01",
+      "previous": "2020-01-17T00:00:00+00:00",
+      "current": "2020-02-03T00:00:00+00:00",
+      "classification": "SAME_IDENTITY_TRADING_HALT",
+      "resolution": "EXPECTED_NO_TRADING_INTERVAL",
+      "source": "https://www.binance.com/en/support/announcement/detail/360038551032",
+      "corroborating_source": "https://www.binance.com/en/support/announcement/detail/360039036032",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance officially halted ETHBEAR/USDT on 2020-01-17 due to a technical issue and separately announced trading would resume on 2020-02-03 10:00 UTC.",
+      "requires_episode_split": false
+    },
+    {
+      "market_id": "ETHBULLUSDT__E01",
+      "previous": "2020-01-17T00:00:00+00:00",
+      "current": "2020-02-03T00:00:00+00:00",
+      "classification": "SAME_IDENTITY_TRADING_HALT",
+      "resolution": "EXPECTED_NO_TRADING_INTERVAL",
+      "source": "https://www.binance.com/en/support/announcement/detail/360038551032",
+      "corroborating_source": "https://www.binance.com/en/support/announcement/detail/360039036032",
+      "source_authority": "BINANCE_OFFICIAL",
+      "evidence": "Binance officially halted ETHBULL/USDT on 2020-01-17 due to a technical issue and separately announced trading would resume on 2020-02-03 10:00 UTC.",
+      "requires_episode_split": false
+    },
+    {
       "market_id": "KEYUSDT__E01",
       "previous": "2023-02-10T00:00:00+00:00",
       "current": "2023-03-10T00:00:00+00:00",
