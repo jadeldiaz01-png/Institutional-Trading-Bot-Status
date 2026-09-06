@@ -4,29 +4,65 @@
   "title": "Institutional Trading Bot Production Readiness Manifest 2026",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version","generated_at","source_commit_sha","stage","decision","evidence","gates","authorizations"],
+  "required": [
+    "schema_version","generated_at","commit_sha","stage","decision","live_ready",
+    "certifications","identities","metrics","evidence","gates","blockers",
+    "authorizations","governance","standards"
+  ],
   "properties": {
-    "schema_version": {"const":"2026-09-01"},
+    "schema_version": {"const":"2026-09-06"},
     "generated_at": {"type":"string","format":"date-time"},
-    "source_commit_sha": {"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "commit_sha": {"type":"string","pattern":"^[0-9a-f]{40}$"},
     "stage": {"enum":["RESEARCH","VERIFIED_BACKTEST","PAPER","TESTNET","SHADOW","LIVE_PILOT","SCALED_LIVE"]},
-    "decision": {"enum":["NO_GO","FROZEN_HOLDOUT_CANDIDATE","PAPER_CANDIDATE","TESTNET_CANDIDATE","SHADOW_CANDIDATE","LIVE_PILOT_CANDIDATE","SCALED_LIVE_CANDIDATE"]},
-    "evidence": {
+    "decision": {"enum":["NO_GO","LIVE_PRODUCTION_READY_VERIFIED"]},
+    "live_ready": {"type":"boolean"},
+    "certifications": {
       "type":"object","additionalProperties":false,
-      "required":["dataset","quantitative","execution","risk","security","supply_chain","reliability","observability","governance","finops"],
+      "required":["DATA_VERIFIED","EDGE_VERIFIED","EXECUTION_VERIFIED","RISK_VERIFIED","RECONCILIATION_VERIFIED","SECURITY_VERIFIED","PRODUCTION_INFRASTRUCTURE_VERIFIED","TESTNET_VERIFIED","SHADOW_VERIFIED","LIVE_PILOT_VERIFIED","LIVE_PRODUCTION_READY_VERIFIED"],
       "properties": {
-        "dataset":{"$ref":"#/$defs/evidenceGate"},"quantitative":{"$ref":"#/$defs/evidenceGate"},"execution":{"$ref":"#/$defs/evidenceGate"},"risk":{"$ref":"#/$defs/evidenceGate"},"security":{"$ref":"#/$defs/evidenceGate"},"supply_chain":{"$ref":"#/$defs/evidenceGate"},"reliability":{"$ref":"#/$defs/evidenceGate"},"observability":{"$ref":"#/$defs/evidenceGate"},"governance":{"$ref":"#/$defs/evidenceGate"},"finops":{"$ref":"#/$defs/evidenceGate"}
+        "DATA_VERIFIED":{"type":"boolean"},"EDGE_VERIFIED":{"type":"boolean"},"EXECUTION_VERIFIED":{"type":"boolean"},"RISK_VERIFIED":{"type":"boolean"},
+        "RECONCILIATION_VERIFIED":{"type":"boolean"},"SECURITY_VERIFIED":{"type":"boolean"},"PRODUCTION_INFRASTRUCTURE_VERIFIED":{"type":"boolean"},
+        "TESTNET_VERIFIED":{"type":"boolean"},"SHADOW_VERIFIED":{"type":"boolean"},"LIVE_PILOT_VERIFIED":{"type":"boolean"},"LIVE_PRODUCTION_READY_VERIFIED":{"type":"boolean"}
       }
     },
-    "gates": {"type":"array","minItems":1,"items":{"$ref":"#/$defs/gate"}},
+    "identities": {"type":"object","additionalProperties":true},
+    "metrics": {"type":"object","additionalProperties":true},
+    "evidence": {
+      "type":"object","additionalProperties":false,
+      "required":["repository","dataset","quantitative","execution","risk","reconciliation","security","secrets_identity","supply_chain","cicd","observability","reliability","backup_restore","governance","finops"],
+      "properties": {
+        "repository":{"$ref":"#/$defs/evidenceDomain"},"dataset":{"$ref":"#/$defs/evidenceDomain"},"quantitative":{"$ref":"#/$defs/evidenceDomain"},
+        "execution":{"$ref":"#/$defs/evidenceDomain"},"risk":{"$ref":"#/$defs/evidenceDomain"},"reconciliation":{"$ref":"#/$defs/evidenceDomain"},
+        "security":{"$ref":"#/$defs/evidenceDomain"},"secrets_identity":{"$ref":"#/$defs/evidenceDomain"},"supply_chain":{"$ref":"#/$defs/evidenceDomain"},
+        "cicd":{"$ref":"#/$defs/evidenceDomain"},"observability":{"$ref":"#/$defs/evidenceDomain"},"reliability":{"$ref":"#/$defs/evidenceDomain"},
+        "backup_restore":{"$ref":"#/$defs/evidenceDomain"},"governance":{"$ref":"#/$defs/evidenceDomain"},"finops":{"$ref":"#/$defs/evidenceDomain"}
+      }
+    },
+    "gates": {"type":"array","minItems":33,"maxItems":33,"items":{"$ref":"#/$defs/gate"}},
+    "blockers": {"type":"array","items":{"type":"object","additionalProperties":true}},
     "authorizations": {
       "type":"object","additionalProperties":false,
-      "required":["paper","testnet","live_pilot","scaled_live"],
-      "properties":{"paper":{"type":"boolean"},"testnet":{"type":"boolean"},"live_pilot":{"type":"boolean"},"scaled_live":{"type":"boolean"}}
-    }
+      "required":["paper","testnet","shadow","live_pilot","scaled_live"],
+      "properties":{"paper":{"type":"boolean"},"testnet":{"type":"boolean"},"shadow":{"type":"boolean"},"live_pilot":{"type":"boolean"},"scaled_live":{"type":"boolean"}}
+    },
+    "governance": {"type":"object","additionalProperties":false,"required":["default_deny","probabilistic_authorization_forbidden","human_approval_required_for_live_capital","missing_evidence_means_no_go","holdout_may_not_be_used_for_selection_or_tuning","live_activation_requires_separate_human_authorization"],"properties":{"default_deny":{"const":true},"probabilistic_authorization_forbidden":{"const":true},"human_approval_required_for_live_capital":{"const":true},"missing_evidence_means_no_go":{"const":true},"holdout_may_not_be_used_for_selection_or_tuning":{"const":true},"live_activation_requires_separate_human_authorization":{"const":true}}},
+    "standards": {"type":"object","additionalProperties":true}
   },
   "$defs": {
-    "evidenceGate": {"type":"object","additionalProperties":false,"required":["status","artifacts"],"properties":{"status":{"enum":["PASS","FAIL","MISSING","NOT_APPLICABLE"]},"artifacts":{"type":"array","items":{"type":"string"}},"sha256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"}}},
-    "gate": {"type":"object","additionalProperties":false,"required":["id","status","blocking"],"properties":{"id":{"type":"string","minLength":1},"status":{"enum":["PASS","FAIL","MISSING"]},"blocking":{"type":"boolean"},"reason":{"type":"string"}}}
+    "evidenceItem": {
+      "type":"object","additionalProperties":true,
+      "required":["status","artifact","sha256","source_commit_sha","issuer","verification"],
+      "properties":{"status":{"const":"PASS"},"artifact":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"source_commit_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"issuer":{"type":"string","minLength":1},"verification":{"const":"VERIFIED"}}
+    },
+    "evidenceDomain": {
+      "type":"object","additionalProperties":false,
+      "required":["status","items","validation_reasons"],
+      "properties":{"status":{"enum":["PASS","FAIL","MISSING","NOT_APPLICABLE"]},"items":{"type":"array","items":{"$ref":"#/$defs/evidenceItem"}},"validation_reasons":{"type":"array","items":{"type":"string"}}}
+    },
+    "gate": {
+      "type":"object","additionalProperties":true,
+      "required":["id","name","status","blocking","evidence","blocker"],
+      "properties":{"id":{"pattern":"^G(?:[0-9]|[12][0-9]|3[0-2])$"},"name":{"type":"string","minLength":1},"status":{"enum":["PASS","FAIL","BLOCKED"]},"blocking":{"const":true},"evidence":{"type":"array","items":{"type":"string"}},"blocker":{"type":["string","null"]}}
+    }
   }
 }
