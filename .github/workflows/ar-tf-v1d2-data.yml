@@ -1,5 +1,8 @@
 name: ar-tf-v1d2-data
 
+run-name: >-
+  ar-tf-v1d2-data / ${{ github.event_name }} / ${{ inputs.agent || 'dataset-certifier' }} / ${{ inputs.environment || 'ci' }}
+
 on:
   pull_request:
     paths:
@@ -13,20 +16,99 @@ on:
       - 'tests/test_ar_tf_dataset_certifier.py'
       - '.github/workflows/ar-tf-v1d2-data.yml'
   workflow_dispatch:
+    inputs:
+      agent:
+        description: Agent/runtime entry point to execute
+        required: true
+        type: choice
+        default: dataset-certifier
+        options:
+          - dataset-certifier
+      environment:
+        description: Execution environment
+        required: true
+        type: choice
+        default: research
+        options:
+          - research
+          - staging
+      expected_sha:
+        description: Exact authorized commit SHA. Dispatch fails closed on mismatch.
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+env:
+  EXECUTION_ENABLED_BY_DEFAULT: 'false'
+  PAPER_AUTHORIZED: 'false'
+  TESTNET_AUTHORIZED: 'false'
+  LIVE_AUTHORIZED: 'false'
 
 concurrency:
   group: ar-tf-v1d2-data-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  dispatch-authorization:
+    name: Validate execution authorization
+    runs-on: ubuntu-latest
+    outputs:
+      authorized_sha: ${{ steps.auth.outputs.authorized_sha }}
+    steps:
+      - name: Fail closed unless dispatch SHA is exact
+        id: auth
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          REQUESTED_AGENT: ${{ inputs.agent || 'dataset-certifier' }}
+          REQUESTED_ENVIRONMENT: ${{ inputs.environment || 'ci' }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            if [[ -z "$EXPECTED_SHA" ]]; then
+              echo '::error::expected_sha is required for workflow_dispatch.'
+              exit 1
+            fi
+            if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo '::error::expected_sha must be a full 40-character lowercase commit SHA.'
+              exit 1
+            fi
+            if [[ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]]; then
+              echo "::error::SHA authorization mismatch: expected=$EXPECTED_SHA actual=$ACTUAL_SHA"
+              exit 1
+            fi
+            if [[ "$REQUESTED_AGENT" != "dataset-certifier" ]]; then
+              echo "::error::Unsupported agent: $REQUESTED_AGENT"
+              exit 1
+            fi
+            if [[ "$REQUESTED_ENVIRONMENT" != "research" && "$REQUESTED_ENVIRONMENT" != "staging" ]]; then
+              echo "::error::Unsupported environment: $REQUESTED_ENVIRONMENT"
+              exit 1
+            fi
+          fi
+          echo "authorized_sha=$ACTUAL_SHA" >> "$GITHUB_OUTPUT"
+          printf 'AUTHORIZED_SHA=%s\nAGENT=%s\nENVIRONMENT=%s\n' \
+            "$ACTUAL_SHA" "$REQUESTED_AGENT" "$REQUESTED_ENVIRONMENT"
+
   historical-evidence-discovery:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: dispatch-authorization
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.dispatch-authorization.outputs.authorized_sha }}
+      - name: Verify checked-out commit
+        shell: bash
+        env:
+          AUTHORIZED_SHA: ${{ needs.dispatch-authorization.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -60,9 +142,20 @@ jobs:
   historical-dataset-download:
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: historical-evidence-discovery
+    needs:
+      - dispatch-authorization
+      - historical-evidence-discovery
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.dispatch-authorization.outputs.authorized_sha }}
+      - name: Verify checked-out commit
+        shell: bash
+        env:
+          AUTHORIZED_SHA: ${{ needs.dispatch-authorization.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -74,7 +167,7 @@ jobs:
           path: artifacts/ar_tf_v1d2
       - name: Reconcile, verify, and freeze complete OHLCV history
         env:
-          AR_TF_CODE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          AR_TF_CODE_SHA: ${{ needs.dispatch-authorization.outputs.authorized_sha }}
         run: |
           python -m ar_tf.dataset_certifier \
             --evidence-dir artifacts/ar_tf_v1d2 \
