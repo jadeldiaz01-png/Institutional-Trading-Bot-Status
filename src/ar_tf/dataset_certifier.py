@@ -20,6 +20,7 @@ from .lifecycle_verifier import _timestamp_unit, file_sha256
 _LOCK = threading.Lock()
 _ANOMALIES: list[dict] = []
 DEFAULT_EVENT_REGISTRY = "config/ar_tf_market_event_registry_2026.json"
+_MARKET_NUMERIC_COLUMNS = ["open", "high", "low", "close", "volume", "quote_volume", "trade_count"]
 
 
 def _row_sha256(row: list[str]) -> str:
@@ -128,6 +129,187 @@ def _download_reconciled_zip(key: str, *, timeout: int = 60) -> tuple[pd.DataFra
     return _parse_reconciled_zip(payload, key, digest), digest
 
 
+def _market_row_invariant_reasons(row: pd.Series) -> list[str]:
+    """Return deterministic physical-market invariant violations for one 1d kline row."""
+    numeric = pd.to_numeric(row[_MARKET_NUMERIC_COLUMNS], errors="coerce")
+    if bool(numeric.isna().any()):
+        return ["NON_NUMERIC_OHLCV"]
+    reasons: list[str] = []
+    if bool((numeric[["open", "high", "low", "close"]] <= 0).any()):
+        reasons.append("NON_POSITIVE_PRICE")
+    if bool((numeric[["volume", "quote_volume", "trade_count"]] < 0).any()):
+        reasons.append("NEGATIVE_ACTIVITY")
+    if float(numeric["high"]) < max(float(numeric["open"]), float(numeric["close"]), float(numeric["low"])):
+        reasons.append("HIGH_INVARIANT")
+    if float(numeric["low"]) > min(float(numeric["open"]), float(numeric["close"]), float(numeric["high"])):
+        reasons.append("LOW_INVARIANT")
+    return reasons
+
+
+def _market_row_payload(row: pd.Series) -> dict:
+    return {
+        "timestamp": pd.Timestamp(row["timestamp"]).isoformat(),
+        **{column: str(row[column]) for column in _MARKET_NUMERIC_COLUMNS},
+    }
+
+
+def _recompute_manifest_market_identity(output_dir: Path, manifest: dict) -> dict:
+    """Rebind every market CSV and dataset SHA after any checksum-verified row replacement."""
+    markets = manifest["markets"]
+    for market in markets:
+        market["csv_sha256"] = file_sha256(output_dir / "market" / f"{market['market_id']}.csv")
+    aggregate_lines = "".join(
+        f"{x['market_id']} {x['csv_sha256']}\n" for x in sorted(markets, key=lambda x: x["market_id"])
+    ).encode("utf-8")
+    manifest["dataset_sha256"] = hashlib.sha256(aggregate_lines).hexdigest()
+    manifest["market_manifest_sha256"] = canonical_sha256(markets)
+    (output_dir / "dataset-manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    (output_dir / "dataset.sha256").write_text(
+        manifest["dataset_sha256"] + "  AR_TF_V1D2_DATASET\n", encoding="utf-8"
+    )
+    return manifest
+
+
+def _reconcile_market_invariants_from_daily(
+    output_dir: Path,
+    manifest: dict,
+    *,
+    timeout: int = 60,
+) -> dict:
+    """Adjudicate invalid monthly-derived rows only with same-day official daily archives.
+
+    No interpolation, clipping, price adjustment, future observation or statistical
+    imputation is allowed. A row is replaced only when the exact Binance Vision
+    daily 1d ZIP exists, its CHECKSUM verifies, contains exactly one matching UTC
+    day, and the replacement independently satisfies every physical kline invariant.
+    Otherwise the anomaly remains unresolved and dataset certification fails closed.
+    """
+    reconciliations: list[dict] = []
+    any_replacement = False
+    market_by_id = {x["market_id"]: x for x in manifest["markets"]}
+
+    for market_id in sorted(market_by_id):
+        market = market_by_id[market_id]
+        path = output_dir / "market" / f"{market_id}.csv"
+        frame = pd.read_csv(path)
+        frame["timestamp"] = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+        if frame["timestamp"].isna().any():
+            continue
+        changed = False
+        for idx, row in frame.iterrows():
+            reasons = _market_row_invariant_reasons(row)
+            if not reasons:
+                continue
+            timestamp = pd.Timestamp(row["timestamp"])
+            symbol = str(row["symbol"])
+            day_text = timestamp.strftime("%Y-%m-%d")
+            daily_key = f"data/spot/daily/klines/{symbol}/1d/{symbol}-1d-{day_text}.zip"
+            original_payload = _market_row_payload(row)
+            original_sha = canonical_sha256(original_payload)
+            base = {
+                "schema_version": "1.0.0",
+                "anomaly_type": "+".join(sorted(reasons)),
+                "market_id": market_id,
+                "symbol": symbol,
+                "timestamp": timestamp.isoformat(),
+                "source_key": daily_key,
+                "open_time_raw": str(int(timestamp.timestamp() * 1000)),
+                "original_row_sha256": original_sha,
+                "original_reasons": sorted(reasons),
+            }
+            try:
+                daily, digest = _download_reconciled_zip(daily_key, timeout=timeout)
+                if len(daily) != 1:
+                    raise ValueError(f"daily 1d archive must contain exactly one row: {daily_key}: {len(daily)}")
+                candidate = daily.iloc[0].copy()
+                candidate_ts = pd.Timestamp(candidate["timestamp"])
+                candidate_ts = candidate_ts.tz_localize("UTC") if candidate_ts.tzinfo is None else candidate_ts.tz_convert("UTC")
+                if candidate_ts != timestamp:
+                    raise ValueError(
+                        f"daily archive timestamp mismatch: {daily_key}: {candidate_ts.isoformat()} != {timestamp.isoformat()}"
+                    )
+                candidate_reasons = _market_row_invariant_reasons(candidate)
+                replacement_payload = _market_row_payload(candidate)
+                replacement_sha = canonical_sha256(replacement_payload)
+                if candidate_reasons:
+                    entry = {
+                        **base,
+                        "source_sha256": digest,
+                        "state": "UNRESOLVED",
+                        "resolution": "DAILY_ARCHIVE_INVARIANT_FAILED_FAIL_CLOSED",
+                        "replacement_row_sha256": replacement_sha,
+                        "replacement_reasons": sorted(candidate_reasons),
+                    }
+                    entry["resolution_sha256"] = canonical_sha256({
+                        "market_id": market_id,
+                        "timestamp": timestamp.isoformat(),
+                        "source_sha256": digest,
+                        "original_row_sha256": original_sha,
+                        "replacement_row_sha256": replacement_sha,
+                        "method": entry["resolution"],
+                    })
+                    _record(entry)
+                    reconciliations.append(entry)
+                    continue
+
+                for column in ["open", "high", "low", "close", "volume", "quote_volume", "trade_count"]:
+                    frame.at[idx, column] = candidate[column]
+                entry = {
+                    **base,
+                    "source_sha256": digest,
+                    "state": "RESOLVED",
+                    "resolution": "CHECKSUM_VERIFIED_SAME_DAY_DAILY_ROW_REPLACEMENT",
+                    "replacement_row_sha256": replacement_sha,
+                    "replacement_reasons": [],
+                }
+                entry["resolution_sha256"] = canonical_sha256({
+                    "market_id": market_id,
+                    "timestamp": timestamp.isoformat(),
+                    "source_sha256": digest,
+                    "original_row_sha256": original_sha,
+                    "replacement_row_sha256": replacement_sha,
+                    "method": entry["resolution"],
+                })
+                _record(entry)
+                reconciliations.append(entry)
+                changed = True
+                any_replacement = True
+            except Exception as exc:
+                entry = {
+                    **base,
+                    "source_sha256": None,
+                    "state": "UNRESOLVED",
+                    "resolution": "DAILY_ARCHIVE_RECONCILIATION_FAILED_FAIL_CLOSED",
+                    "error": f"{type(exc).__name__}:{exc}",
+                }
+                entry["resolution_sha256"] = canonical_sha256({
+                    "market_id": market_id,
+                    "timestamp": timestamp.isoformat(),
+                    "original_row_sha256": original_sha,
+                    "error": entry["error"],
+                    "method": entry["resolution"],
+                })
+                _record(entry)
+                reconciliations.append(entry)
+
+        if changed:
+            frame.to_csv(path, index=False, lineterminator="\n")
+
+    manifest["row_reconciliations"] = reconciliations
+    manifest["row_reconciliation_attempt_count"] = len(reconciliations)
+    manifest["row_reconciliation_resolved_count"] = sum(x["state"] == "RESOLVED" for x in reconciliations)
+    manifest["row_reconciliation_manifest_sha256"] = canonical_sha256(reconciliations)
+    if any_replacement:
+        manifest = _recompute_manifest_market_identity(output_dir, manifest)
+    else:
+        (output_dir / "dataset-manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    return manifest
+
+
 def _gap_report(dataset_dir: Path, manifest: dict) -> dict:
     events: list[dict] = []
     checked_rows = 0
@@ -175,6 +357,7 @@ def _checksum_report(manifest: dict) -> dict:
     reconstructed_months = 0
     daily_verified = 0
     internal_gap_daily_verified = 0
+    row_reconciliation_daily_verified = 0
 
     for archive in manifest["archives"]:
         digest = str(archive.get("sha256", ""))
@@ -205,13 +388,22 @@ def _checksum_report(manifest: dict) -> dict:
             if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
                 invalid.append({"key": source.get("key"), "reason": "invalid_internal_gap_daily_digest"})
 
+    for repair in manifest.get("row_reconciliations", []):
+        if repair.get("state") != "RESOLVED":
+            continue
+        row_reconciliation_daily_verified += 1
+        digest = str(repair.get("source_sha256", ""))
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
+            invalid.append({"key": repair.get("source_key"), "reason": "invalid_row_reconciliation_daily_digest"})
+
     return {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "archive_plan_count": manifest["archive_count"],
         "monthly_checksum_verified_count": monthly_verified,
         "daily_reconstructed_month_count": reconstructed_months,
         "daily_checksum_verified_source_count": daily_verified,
         "internal_gap_daily_checksum_verified_source_count": internal_gap_daily_verified,
+        "row_reconciliation_daily_checksum_verified_source_count": row_reconciliation_daily_verified,
         "invalid_checksum_evidence_count": len(invalid),
         "invalid": invalid,
         "all_source_checksums_verified": len(invalid) == 0,
@@ -245,14 +437,20 @@ def certify_dataset(
     finally:
         hd._download_verified_zip = original_download
 
+    manifest = _reconcile_market_invariants_from_daily(out, manifest, timeout=timeout)
+
     anomalies = sorted(
         _ANOMALIES,
         key=lambda x: (x["source_key"], x["open_time_raw"], x["state"], x["resolution_sha256"]),
     )
     unresolved_anomalies = [x for x in anomalies if x["state"] != "RESOLVED"]
     anomaly_ledger = {
-        "schema_version": "1.0.0",
-        "policy": "exact-identical duplicates may collapse; conflicting rows fail closed",
+        "schema_version": "1.1.0",
+        "policy": (
+            "exact-identical duplicates may collapse; conflicting rows fail closed; "
+            "physical OHLCV invariant violations may be replaced only by the exact same-day "
+            "Binance Vision daily row after independent CHECKSUM and invariant verification"
+        ),
         "resolved_count": len(anomalies) - len(unresolved_anomalies),
         "unresolved_count": len(unresolved_anomalies),
         "entries": anomalies,
@@ -290,7 +488,7 @@ def certify_dataset(
         unresolved_count += 1
 
     certificate = {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "decision": "FROZEN_DATASET" if unresolved_count == 0 else "NO_GO",
         "dataset_id": manifest["dataset_id"],
         "dataset_sha256": manifest["dataset_sha256"],
@@ -304,6 +502,9 @@ def certify_dataset(
         "internal_gap_repair_manifest_sha256": manifest.get("internal_gap_repair_manifest_sha256"),
         "internal_gap_repair_attempt_count": manifest.get("internal_gap_repair_attempt_count", 0),
         "internal_gap_repair_resolved_count": manifest.get("internal_gap_repair_resolved_count", 0),
+        "row_reconciliation_manifest_sha256": manifest.get("row_reconciliation_manifest_sha256"),
+        "row_reconciliation_attempt_count": manifest.get("row_reconciliation_attempt_count", 0),
+        "row_reconciliation_resolved_count": manifest.get("row_reconciliation_resolved_count", 0),
         "reconciliation_ledger_sha256": file_sha256(anomaly_path),
         "gap_report_sha256": file_sha256(gap_path),
         "checksum_report_sha256": file_sha256(checksum_path),
