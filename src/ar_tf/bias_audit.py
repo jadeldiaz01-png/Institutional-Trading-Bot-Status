@@ -25,11 +25,13 @@ def _load_yaml(path: str | Path) -> dict[str, Any]:
 
 
 def audit_frozen_dataset(dataset_dir: str | Path, folds_path: str | Path) -> dict[str, Any]:
-    """G4 bias audit over the certified dataset without reading final-holdout returns.
+    """G4 structural bias audit without evaluating final-holdout market values.
 
-    The audit is intentionally structural. It validates timestamp/lifecycle/OHLCV
-    invariants and the research/holdout boundary, but it never computes a signal,
-    return, feature, label, metric, or model result inside the final holdout.
+    The dataset certificate is trusted for whole-dataset integrity. This audit
+    parses timestamps across the frozen files only to enforce the sealed research
+    boundary. Numeric OHLCV and identity checks are performed solely on rows at
+    or before research_end. No holdout signal, feature, label, price invariant,
+    return, metric, summary, or model result is computed here.
     """
     root = Path(dataset_dir)
     cert = json.loads((root / "dataset-freeze-certificate.json").read_text(encoding="utf-8"))
@@ -43,20 +45,14 @@ def audit_frozen_dataset(dataset_dir: str | Path, folds_path: str | Path) -> dic
 
     reasons: list[str] = []
     required = {
-        "decision": "FROZEN_DATASET",
-        "frozen": True,
-        "unresolved_count": 0,
-        "unresolved_gap_count": 0,
-        "unresolved_anomaly_count": 0,
-        "invalid_checksum_evidence_count": 0,
-        "lifecycle_binding_verified": True,
-        "source_plan_binding_verified": True,
-        "holdout_evaluated": False,
+        "decision": "FROZEN_DATASET", "frozen": True, "unresolved_count": 0,
+        "unresolved_gap_count": 0, "unresolved_anomaly_count": 0,
+        "invalid_checksum_evidence_count": 0, "lifecycle_binding_verified": True,
+        "source_plan_binding_verified": True, "holdout_evaluated": False,
     }
     for key, expected in required.items():
         if cert.get(key) != expected:
             reasons.append(f"CERTIFICATE_{key.upper()}_FAILED")
-
     if folds.get("holdout", {}).get("opened") is not False:
         reasons.append("HOLDOUT_NOT_SEALED")
     if holdout_start <= research_end:
@@ -66,29 +62,39 @@ def audit_frozen_dataset(dataset_dir: str | Path, folds_path: str | Path) -> dic
     if len(files) != int(cert.get("market_episode_count", -1)):
         reasons.append("MARKET_EPISODE_FILE_COUNT_MISMATCH")
 
-    rows_checked = 0
-    research_rows = 0
+    research_rows_checked = 0
     holdout_rows_seen_structurally = 0
     for path in files:
-        df = pd.read_csv(path)
-        expected_cols = {"timestamp", "symbol", "episode_id", "open", "high", "low", "close", "volume", "quote_volume", "trade_count"}
-        if set(df.columns) != expected_cols:
+        columns = pd.read_csv(path, nrows=0).columns.tolist()
+        expected_cols = ["timestamp", "symbol", "episode_id", "open", "high", "low", "close", "volume", "quote_volume", "trade_count"]
+        if set(columns) != set(expected_cols):
             reasons.append(f"SCHEMA_MISMATCH:{path.name}")
             continue
-        if df.empty:
+
+        # Timestamp-only pass across the whole file. This does not inspect holdout prices/returns.
+        ts_only = pd.read_csv(path, usecols=["timestamp"])
+        if ts_only.empty:
             reasons.append(f"EMPTY_EPISODE:{path.name}")
             continue
-        ts = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+        ts = pd.to_datetime(ts_only["timestamp"], utc=True, errors="coerce")
         if ts.isna().any() or not ts.is_monotonic_increasing or ts.duplicated().any():
             reasons.append(f"TIMESTAMP_INTEGRITY:{path.name}")
         if not ((ts.dt.hour == 0) & (ts.dt.minute == 0) & (ts.dt.second == 0)).all():
             reasons.append(f"NON_DAILY_BOUNDARY:{path.name}")
+        research_mask = ts <= research_end
+        holdout_rows_seen_structurally += int((ts >= holdout_start).sum())
+        if not bool(research_mask.any()):
+            continue
+
+        # Re-read only research rows for numeric/identity checks. Values after research_end are discarded immediately.
+        df = pd.read_csv(path)
+        df = df.loc[research_mask.to_numpy()].copy()
         if df["symbol"].nunique(dropna=False) != 1 or df["episode_id"].nunique(dropna=False) != 1:
             reasons.append(f"IDENTITY_NOT_CONSTANT:{path.name}")
         numeric = df[["open", "high", "low", "close", "volume", "quote_volume", "trade_count"]].apply(pd.to_numeric, errors="coerce")
         if numeric.isna().any(axis=None):
             reasons.append(f"NON_NUMERIC_OHLCV:{path.name}")
-        if ((numeric[["open", "high", "low", "close"]]) <= 0).any(axis=None):
+        if (numeric[["open", "high", "low", "close"]] <= 0).any(axis=None):
             reasons.append(f"NON_POSITIVE_PRICE:{path.name}")
         if (numeric[["volume", "quote_volume", "trade_count"]] < 0).any(axis=None):
             reasons.append(f"NEGATIVE_ACTIVITY:{path.name}")
@@ -96,31 +102,20 @@ def audit_frozen_dataset(dataset_dir: str | Path, folds_path: str | Path) -> dic
             reasons.append(f"HIGH_INVARIANT:{path.name}")
         if (numeric["low"] > numeric[["open", "close", "high"]].min(axis=1)).any():
             reasons.append(f"LOW_INVARIANT:{path.name}")
-
-        rows_checked += len(df)
-        research_rows += int((ts <= research_end).sum())
-        # Count timestamps only. Never read/aggregate holdout returns or values.
-        holdout_rows_seen_structurally += int((ts >= holdout_start).sum())
+        research_rows_checked += len(df)
 
     result = {
-        "schema_version": "1.0.0",
-        "gate": "G4",
-        "decision": "PASS" if not reasons else "FAIL",
-        "reasons": sorted(set(reasons)),
-        "dataset_sha256": cert.get("dataset_sha256"),
+        "schema_version": "1.1.0", "gate": "G4", "decision": "PASS" if not reasons else "FAIL",
+        "reasons": sorted(set(reasons)), "dataset_sha256": cert.get("dataset_sha256"),
         "lifecycle_sha256": cert.get("verified_lifecycle_sha256"),
         "dataset_certificate_sha256": sha256_file(root / "dataset-freeze-certificate.json"),
-        "fold_definition_sha256": sha256_file(folds_path),
-        "market_episode_count": len(files),
-        "rows_checked": rows_checked,
-        "research_rows": research_rows,
+        "fold_definition_sha256": sha256_file(folds_path), "market_episode_count": len(files),
+        "research_rows_checked": research_rows_checked,
         "holdout_rows_seen_structurally": holdout_rows_seen_structurally,
-        "holdout_values_evaluated": False,
-        "holdout_opened": False,
+        "holdout_values_evaluated": False, "holdout_opened": False,
         "lookahead_policy": "ALL_SIGNALS_FEATURES_LABELS_AND_EXECUTION_MUST_BE_CAUSAL_AND_ONE_BAR_DELAYED",
         "survivorship_policy": "POINT_IN_TIME_LIFECYCLE_EPISODES_INCLUDE_DEAD_AND_DELISTED_ASSETS",
-        "selection_window_end": research_end.isoformat(),
-        "final_holdout_start": holdout_start.isoformat(),
+        "selection_window_end": research_end.isoformat(), "final_holdout_start": holdout_start.isoformat(),
     }
     return result
 
