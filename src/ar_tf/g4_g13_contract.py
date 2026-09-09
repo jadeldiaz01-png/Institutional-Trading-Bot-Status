@@ -6,17 +6,7 @@ from pathlib import Path
 from typing import Any
 
 GATES = ("G4", "G5", "G6", "G7", "G8", "G9", "G10", "G11", "G12", "G13")
-
-REQUIRED_G6_G13_EVIDENCE = {
-    "G6": ("backtest_correctness", "one_bar_execution_delay", "point_in_time_features", "failed_trials_retained"),
-    "G7": ("common_oos_folds", "purged", "embargoed", "oos_return_matrix_sha256"),
-    "G8": ("dsr", "pbo", "white_reality_check", "hansen_spa", "block_bootstrap"),
-    "G9": ("base_costs", "stressed_costs", "severe_costs", "binance_filter_model"),
-    "G10": ("parameter_plateau", "entry_delay", "execution_delay", "random_slippage", "missing_trade_stress"),
-    "G11": ("calendar_year", "bull_bear_sideways", "volatility", "liquidity", "dispersion"),
-    "G12": ("turnover", "liquidity", "capacity", "market_impact"),
-    "G13": ("position_sizing", "concentration", "gross_exposure", "volatility_target", "portfolio_risk"),
-}
+VALID_STATUSES = {"PASS", "FAIL", "BLOCKED"}
 
 
 def canonical_sha256(value: Any) -> str:
@@ -54,14 +44,22 @@ def evaluate_g4_g13(
             for gid in GATES[2:]:
                 gates[gid] = {"status": "FAIL", "reasons": ["HOLDOUT_CONTAMINATION"]}
         else:
-            evidence = tournament.get("evidence", {})
-            for gid, required in REQUIRED_G6_G13_EVIDENCE.items():
-                missing = [key for key in required if not evidence.get(key)]
-                gates[gid] = {"status": "PASS" if not missing else "BLOCKED", "reasons": [f"MISSING:{x}" for x in missing]}
+            supplied = tournament.get("gate_results", {})
+            for gid in GATES[2:]:
+                item = supplied.get(gid)
+                if not isinstance(item, dict):
+                    gates[gid] = {"status": "BLOCKED", "reasons": ["MISSING_EXPLICIT_GATE_RESULT"]}
+                    continue
+                status = item.get("status")
+                reasons = list(item.get("reasons", []))
+                if status not in VALID_STATUSES:
+                    gates[gid] = {"status": "FAIL", "reasons": ["INVALID_GATE_STATUS"]}
+                    continue
+                gates[gid] = {"status": status, "reasons": reasons}
 
     all_pass = all(gates[g]["status"] == "PASS" for g in GATES)
     result = {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "scope": "G4-G13_PRE_HOLDOUT",
         "gates": gates,
         "all_g4_g13_pass": all_pass,
