@@ -44,29 +44,90 @@ jobs:
           python-version: '3.11'
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[dev]'
-      - name: Download exact frozen dataset artifact from certified run 39
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ARTIFACT_ID: '9995675700'
+      - name: Resolve immutable artifact identity from certified binding
         run: |
-          set -euo pipefail
-          mkdir -p artifacts/g4_g13/frozen_dataset
-          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > artifacts/g4_g13/frozen-dataset.zip
-          unzip -q artifacts/g4_g13/frozen-dataset.zip -d artifacts/g4_g13/frozen_dataset
-      - name: Verify certificate identity against immutable binding
-        run: |
-          python - <<'PY'
+          python - <<'PY' >> "$GITHUB_ENV"
           import json
           from pathlib import Path
           b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
-          c=json.loads(Path('artifacts/g4_g13/frozen_dataset/dataset-freeze-certificate.json').read_text())
+          assert b['binding_type']=='AR_TF_FROZEN_DATASET_BINDING'
+          assert b['decision']=='FROZEN_DATASET' and b['frozen'] is True
+          assert b['unresolved_count']==0
+          assert b['holdout_evaluated'] is False
+          assert b['paper_authorized'] is False
+          assert b['testnet_authorized'] is False
+          assert b['shadow_authorized'] is False
+          assert b['live_authorized'] is False
+          print(f"BOUND_ARTIFACT_ID={b['source_artifact_id']}")
+          print(f"BOUND_RUN_ID={b['source_run_id']}")
+          print(f"BOUND_ARTIFACT_DIGEST={b['source_artifact_digest']}")
+          PY
+      - name: Verify artifact metadata and download exact certified bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/g4_g13/frozen_dataset
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}" > artifacts/g4_g13/artifact-metadata.json
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          m=json.loads(Path('artifacts/g4_g13/artifact-metadata.json').read_text())
+          assert int(m['id']) == int(b['source_artifact_id'])
+          assert m.get('expired') is False
+          assert m.get('digest') == b['source_artifact_digest']
+          workflow_run=m.get('workflow_run') or {}
+          if workflow_run.get('id') is not None:
+              assert int(workflow_run['id']) == int(b['source_run_id'])
+          PY
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}/zip" > artifacts/g4_g13/frozen-dataset.zip
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          actual='sha256:'+hashlib.sha256(Path('artifacts/g4_g13/frozen-dataset.zip').read_bytes()).hexdigest()
+          assert actual == b['source_artifact_digest'], (actual, b['source_artifact_digest'])
+          PY
+          unzip -q artifacts/g4_g13/frozen-dataset.zip -d artifacts/g4_g13/frozen_dataset
+      - name: Verify complete certificate identity against immutable binding
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          cert_path=Path('artifacts/g4_g13/frozen_dataset/dataset-freeze-certificate.json')
+          c=json.loads(cert_path.read_text())
+          cert_file_sha=hashlib.sha256(cert_path.read_bytes()).hexdigest()
+          assert cert_file_sha==b['dataset_freeze_certificate_file_sha256']
           assert b['decision']=='FROZEN_DATASET' and b['frozen'] is True
           assert c['decision']=='FROZEN_DATASET' and c['frozen'] is True
-          assert c['dataset_sha256']==b['dataset_sha256']
-          assert c['verified_lifecycle_sha256']==b['verified_lifecycle_sha256']
+          exact_fields={
+              'dataset_sha256':'dataset_sha256',
+              'verified_lifecycle_sha256':'verified_lifecycle_sha256',
+              'dataset_manifest_sha256':'dataset_manifest_sha256',
+              'market_event_registry_sha256':'market_event_registry_sha256',
+              'source_plan_sha256':'source_plan_sha256',
+              'source_plan_file_sha256':'source_plan_file_sha256',
+              'gap_report_sha256':'gap_report_sha256',
+              'checksum_report_sha256':'checksum_report_sha256',
+              'reconciliation_ledger_sha256':'reconciliation_ledger_sha256',
+          }
+          for cert_field,binding_field in exact_fields.items():
+              assert c[cert_field]==b[binding_field], (cert_field,c[cert_field],b[binding_field])
           assert c['code_sha']==b['source_code_sha']
-          assert c['unresolved_count']==0 and c['unresolved_gap_count']==0 and c['unresolved_anomaly_count']==0
+          assert c['unresolved_count']==0
+          assert c['unresolved_gap_count']==0
+          assert c['unresolved_anomaly_count']==0
+          assert c['invalid_checksum_evidence_count']==0
+          assert c['source_plan_binding_verified'] is True
+          assert c['lifecycle_binding_verified'] is True
           assert c['holdout_evaluated'] is False
+          assert c['paper_authorized'] is False
+          assert c['testnet_authorized'] is False
+          assert c['shadow_authorized'] is False
+          live=c.get('live_authorized',c.get('live_pilot_authorized',False))
+          assert live is False
           PY
       - name: Execute G4 bias audit without evaluating final-holdout values
         run: |
