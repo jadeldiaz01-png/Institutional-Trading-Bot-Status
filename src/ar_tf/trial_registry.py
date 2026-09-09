@@ -23,11 +23,34 @@ def _grid(params: dict[str, list[Any]]) -> list[dict[str, Any]]:
     return [dict(zip(keys, combo, strict=True)) for combo in itertools.product(*values)]
 
 
-def build_registry(spec: dict[str, Any], *, dataset_sha256: str, lifecycle_sha256: str, source_commit_sha: str) -> dict[str, Any]:
-    """Expand the bounded search space before execution and bind it to frozen data."""
-    for name, value, length in (("dataset_sha256", dataset_sha256, 64), ("lifecycle_sha256", lifecycle_sha256, 64), ("source_commit_sha", source_commit_sha, 40)):
-        if len(value) != length or any(c not in "0123456789abcdef" for c in value.lower()):
-            raise ValueError(f"invalid {name}")
+def _hex(value: str, *, length: int, name: str) -> str:
+    normalized = str(value).lower()
+    if len(normalized) != length or any(c not in "0123456789abcdef" for c in normalized):
+        raise ValueError(f"invalid {name}")
+    return normalized
+
+
+def build_registry(
+    spec: dict[str, Any],
+    *,
+    dataset_sha256: str,
+    lifecycle_sha256: str,
+    source_commit_sha: str,
+    strategy_config_sha256: str | None = None,
+    fold_definition_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Expand the bounded search space before execution and bind it to frozen research identity.
+
+    `strategy_config_sha256` and `fold_definition_sha256` are optional only for
+    backwards-compatible unit tests. Production preregistration MUST supply both.
+    """
+    dataset_sha256 = _hex(dataset_sha256, length=64, name="dataset_sha256")
+    lifecycle_sha256 = _hex(lifecycle_sha256, length=64, name="lifecycle_sha256")
+    source_commit_sha = _hex(source_commit_sha, length=40, name="source_commit_sha")
+    if strategy_config_sha256 is not None:
+        strategy_config_sha256 = _hex(strategy_config_sha256, length=64, name="strategy_config_sha256")
+    if fold_definition_sha256 is not None:
+        fold_definition_sha256 = _hex(fold_definition_sha256, length=64, name="fold_definition_sha256")
 
     policy = dict(spec.get("policy", {}))
     max_trials = int(policy.get("max_total_registered_trials", 500))
@@ -44,7 +67,18 @@ def build_registry(spec: dict[str, Any], *, dataset_sha256: str, lifecycle_sha25
         parameter_sets = _grid(dict(family_spec.get("parameters", {})))
         for params in parameter_sets:
             for seed in seeds:
-                identity = {"dataset_sha256": dataset_sha256, "lifecycle_sha256": lifecycle_sha256, "family": family, "tier": tier, "data_track": data_track, "params": params, "seed": int(seed)}
+                identity = {
+                    "dataset_sha256": dataset_sha256,
+                    "lifecycle_sha256": lifecycle_sha256,
+                    "source_commit_sha": source_commit_sha,
+                    "strategy_config_sha256": strategy_config_sha256,
+                    "fold_definition_sha256": fold_definition_sha256,
+                    "family": family,
+                    "tier": tier,
+                    "data_track": data_track,
+                    "params": params,
+                    "seed": int(seed),
+                }
                 digest = canonical_sha256(identity)
                 trial_id = f"{family}:{digest[:16]}"
                 if trial_id in seen:
@@ -55,15 +89,42 @@ def build_registry(spec: dict[str, Any], *, dataset_sha256: str, lifecycle_sha25
                     raise ValueError(f"preregistered trial budget exceeded: {len(trials)} > {max_trials}")
 
     trials.sort(key=lambda x: x["trial_id"])
-    core = {"schema_version": "1.0.0", "state": "PREREGISTERED_NOT_EXECUTED", "dataset_sha256": dataset_sha256, "lifecycle_sha256": lifecycle_sha256, "source_commit_sha": source_commit_sha, "holdout_evaluated": False, "trial_budget": max_trials, "trial_count": len(trials), "trials": trials}
+    core = {
+        "schema_version": "1.1.0",
+        "state": "PREREGISTERED_NOT_EXECUTED",
+        "dataset_sha256": dataset_sha256,
+        "lifecycle_sha256": lifecycle_sha256,
+        "source_commit_sha": source_commit_sha,
+        "strategy_config_sha256": strategy_config_sha256,
+        "fold_definition_sha256": fold_definition_sha256,
+        "holdout_evaluated": False,
+        "trial_budget": max_trials,
+        "trial_count": len(trials),
+        "trials": trials,
+    }
     return {**core, "registry_sha256": canonical_sha256(core)}
 
 
-def load_and_build_registry(spec_path: str | Path, *, dataset_sha256: str, lifecycle_sha256: str, source_commit_sha: str) -> dict[str, Any]:
+def load_and_build_registry(
+    spec_path: str | Path,
+    *,
+    dataset_sha256: str,
+    lifecycle_sha256: str,
+    source_commit_sha: str,
+    strategy_config_sha256: str | None = None,
+    fold_definition_sha256: str | None = None,
+) -> dict[str, Any]:
     spec = yaml.safe_load(Path(spec_path).read_text(encoding="utf-8"))
     if not isinstance(spec, dict):
         raise ValueError("registry specification must be a mapping")
-    return build_registry(spec, dataset_sha256=dataset_sha256, lifecycle_sha256=lifecycle_sha256, source_commit_sha=source_commit_sha)
+    return build_registry(
+        spec,
+        dataset_sha256=dataset_sha256,
+        lifecycle_sha256=lifecycle_sha256,
+        source_commit_sha=source_commit_sha,
+        strategy_config_sha256=strategy_config_sha256,
+        fold_definition_sha256=fold_definition_sha256,
+    )
 
 
 def write_registry(registry: dict[str, Any], output_path: str | Path) -> None:
