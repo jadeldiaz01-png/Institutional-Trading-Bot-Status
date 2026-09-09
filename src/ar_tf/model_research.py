@@ -57,14 +57,24 @@ def purged_train_test(
     test_start: pd.Timestamp,
     test_end: pd.Timestamp,
     embargo_days: int = 7,
+    label_horizon_days: int = 1,
 ) -> tuple[pd.DatetimeIndex, pd.DatetimeIndex]:
-    purge_end = train_end - pd.Timedelta(days=embargo_days)
+    """Create a leakage-resistant temporal split.
+
+    Training observations are removed far enough from the test boundary that
+    their forward-return labels cannot extend into the embargo or test period.
+    This is stricter than merely separating feature timestamps.
+    """
+    if embargo_days < 0 or label_horizon_days < 1:
+        raise ValueError("embargo_days must be >=0 and label_horizon_days must be >=1")
+    boundary = test_start - pd.Timedelta(days=embargo_days + label_horizon_days)
+    purge_end = min(train_end, boundary)
     train = index[index <= purge_end]
     test = index[(index >= test_start) & (index <= test_end)]
     if len(train) == 0 or len(test) == 0:
         raise ValueError("empty purged split")
-    if train.max() >= test.min():
-        raise ValueError("train/test overlap")
+    if train.max() + pd.Timedelta(days=label_horizon_days) >= test.min() - pd.Timedelta(days=embargo_days):
+        raise ValueError("label horizon overlaps embargo/test boundary")
     return train, test
 
 

@@ -6,12 +6,18 @@ on:
       - 'src/ar_tf/**'
       - 'tests/**'
       - 'config/ar_tf_v1.yaml'
+      - 'config/ar_tf_v1d_tournament.yaml'
       - 'schemas/ar_tf_dataset.schema.json'
       - 'pyproject.toml'
+      - '.github/workflows/ar-tf-research.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ar-tf-research-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -29,8 +35,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
-          p='artifacts/ar-tf-certification-template.json'
-          d=json.load(open(p))
+          d=json.load(open('artifacts/ar-tf-certification-template.json'))
           assert d['decision']=='NO_GO'
           assert d['paper_authorized'] is False
           print('research gate fail-closed: OK')

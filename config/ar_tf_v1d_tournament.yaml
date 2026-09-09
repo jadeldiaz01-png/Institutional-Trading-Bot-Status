@@ -9,22 +9,47 @@ holdout:
   single_open_only: true
 
 tournament:
-  families:
-    - structural_ar_tf
-    - structural_plus_dispersion
-    - ridge
-    - hist_gradient_boosting
-    - xgboost
-    - lstm
-    - itransformer
-  llm_news_regime:
-    enabled: false
-    reason: REQUIRES_POINT_IN_TIME_NEWS_CORPUS
-  seed_repeats: 5
   common_folds_required: true
+  register_all_trials_before_execution: true
   register_failed_trials: true
   pbo_slices: 8
   cost_multipliers: [1.0, 2.0, 3.0]
+  seed_repeats: 5
+  primary_structural_grid:
+    max_assets: [10, 15, 20]
+    volatility_targeting: [false, true]
+    lagged_dispersion_overlay: [false, true]
+    drawdown_derisk_overlay: [false, true]
+  fixed_structural_parameters:
+    min_history_days: 540
+    liquidity_lookback_days: 30
+    min_median_daily_notional_usd: 10000000
+    target_annual_vol: 0.12
+    drawdown_trigger: 0.15
+    drawdown_gross_scale: 0.50
+    dispersion_window: 30
+    dispersion_z_window: 252
+    dispersion_risk_off_z: 1.50
+    turnover_budget: 0.35
+  model_progression:
+    - id: structural_ar_tf
+      status: REQUIRED_BASELINE
+    - id: structural_plus_dispersion
+      status: REQUIRED_ABLATION
+    - id: ridge
+      status: REQUIRED_LINEAR_BASELINE
+    - id: hist_gradient_boosting
+      status: CHALLENGER_AFTER_STRUCTURAL_BASELINES
+    - id: xgboost
+      status: CHALLENGER_AFTER_STRUCTURAL_BASELINES
+      execution_gate: COST_AWARE_REQUIRED
+    - id: lstm
+      status: DEFER_UNTIL_TREE_MODELS_ADD_ROBUST_NET_VALUE
+    - id: itransformer
+      status: DEFER_UNTIL_TREE_MODELS_ADD_ROBUST_NET_VALUE
+  llm_news_regime:
+    enabled: false
+    reason: REQUIRES_IMMUTABLE_POINT_IN_TIME_NEWS_CORPUS
 
 gates:
   min_oos_sharpe: 0.0
@@ -33,6 +58,15 @@ gates:
   max_pbo: 0.20
   min_cost_stress_expectancy: 0.0
   min_trials: 2
+  require_benchmark_improvement: true
+  require_positive_block_bootstrap_lower_tail: true
+  require_regime_stability: true
+  require_liquidity_and_turnover_evidence: true
+
+benchmarks:
+  - btc_buy_and_hold
+  - equal_weight_point_in_time_eligible_universe
+  - simple_long_cash_trend
 
 selection:
   policy: robustness_first_lexicographic
@@ -42,11 +76,13 @@ selection:
     - net_oos_expectancy
   forbid_holdout_tuning: true
   maximum_automated_state: FROZEN_HOLDOUT_CANDIDATE
+  no_winner_if_only_headline_sharpe_passes: true
 
 required_evidence:
   - dataset_manifest_sha256
   - lifecycle_metadata_sha256
   - code_sha
+  - preregistered_trial_registry
   - experiment_registry
   - synchronous_oos_return_matrix
   - pbo
@@ -57,3 +93,4 @@ required_evidence:
   - regime_breakdown
   - turnover_and_liquidity
   - parameter_sensitivity
+  - failed_trial_log

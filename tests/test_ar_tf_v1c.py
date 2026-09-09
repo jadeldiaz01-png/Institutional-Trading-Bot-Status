@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from ar_tf.alpha_lab import AlphaLabConfig, cost_aware_trade_gate, dispersion_state, turnover_limiter
+from ar_tf.alpha_lab import AlphaLabConfig, cost_aware_trade_gate, dispersion_state, drawdown_derisk_scale, turnover_limiter
+from ar_tf.core import ResearchConfig, portfolio_weights
 from ar_tf.model_research import RidgeForecaster, forward_return, purged_train_test
 
 
@@ -24,11 +25,39 @@ def test_dispersion_scale_does_not_use_future_rows():
     pd.testing.assert_series_equal(base.iloc[:-1]["momentum_scale"], changed.iloc[:-1]["momentum_scale"])
 
 
+def test_dispersion_state_is_one_bar_lagged():
+    idx = pd.date_range("2024-01-01", periods=120, freq="D", tz="UTC")
+    r = pd.DataFrame({"A": np.zeros(120), "B": np.zeros(120)}, index=idx)
+    cfg = AlphaLabConfig(dispersion_window=2, dispersion_z_window=30)
+    base = dispersion_state(r, cfg)
+    shocked = r.copy()
+    shocked.iloc[-1] = [1.0, -1.0]
+    changed = dispersion_state(shocked, cfg)
+    assert pd.isna(changed.iloc[-1]["dispersion"]) or changed.iloc[-1]["dispersion"] == base.iloc[-1]["dispersion"]
+
+
+def test_drawdown_overlay_uses_prior_state_only():
+    idx = pd.date_range("2026-01-01", periods=5, freq="D", tz="UTC")
+    r = pd.Series([0.0, 0.0, -0.20, 0.0, 0.0], index=idx)
+    scale = drawdown_derisk_scale(r, trigger=0.15, stressed_scale=0.50)
+    assert scale.iloc[2] == 1.0
+    assert scale.iloc[3] == 0.50
+
+
 def test_turnover_limiter_enforces_budget():
     prev = pd.Series({"A": 0.0, "B": 0.0})
     target = pd.Series({"A": 0.7, "B": 0.3})
     limited = turnover_limiter(prev, target, max_turnover=0.2)
     assert limited.sub(prev).abs().sum() <= 0.2 + 1e-12
+
+
+def test_portfolio_weights_respect_conservative_vol_target():
+    signals = pd.Series({"A": 1.0, "B": 1.0, "C": 1.0})
+    vols = pd.Series({"A": 0.60, "B": 0.60, "C": 0.60})
+    cfg = ResearchConfig(target_annual_vol=0.12, max_asset_weight=1.0, max_gross_exposure=1.0)
+    w = portfolio_weights(signals, vols, cfg)
+    assert float((w * vols).sum()) <= 0.12 + 1e-12
+    assert float(w.sum()) < 1.0
 
 
 def test_forward_label_is_future_only():
