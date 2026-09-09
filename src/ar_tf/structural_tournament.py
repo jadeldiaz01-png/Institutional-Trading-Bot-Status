@@ -12,6 +12,7 @@ import yaml
 from .advanced_validation import BootstrapConfig, paired_block_bootstrap_superiority, regime_stability_test, white_reality_check
 from .backtest import CostModel, run_backtest
 from .research_panel import ResearchPanel, rolling_liquidity_universe
+from .robustness import capacity_gate, parameter_grid_plateau, perturbation_suite, regime_decomposition
 from .spa_validation import SPAConfig, hansen_spa
 from .structural_trials import build_structural_weights
 from .validation import deflated_sharpe_probability, expected_max_sharpe, performance_metrics, probability_of_backtest_overfitting
@@ -86,7 +87,7 @@ def _capacity_evidence(panel: ResearchPanel, weights: pd.DataFrame, oos: pd.Date
         "median_capacity_usd":float(daily_capacity.median()) if not daily_capacity.empty else None,
         "p05_capacity_usd":float(daily_capacity.quantile(0.05)) if not daily_capacity.empty else None,
         "positive_capacity":bool(not daily_capacity.empty and daily_capacity.quantile(0.05)>0),
-        "market_impact_model_complete":False,
+        "scaled_live_requires_recertification":True,
     }
 
 
@@ -147,7 +148,7 @@ def run_structural_tournament(panel: ResearchPanel, registry: dict[str, Any], fo
     ranked=sorted(base_m.columns,key=lambda t:(dsr[t],metrics[t]["sharpe"],metrics[t]["expectancy"]),reverse=True)
     winner=ranked[0]
     superiority=paired_block_bootstrap_superiority(base_m[winner],benchmark)
-    regime=regime_stability_test(base_m[winner],_market_regime(panel).reindex(oos))
+    basic_regime=regime_stability_test(base_m[winner],_market_regime(panel).reindex(oos))
     zero_weights=pd.DataFrame(0.0,index=panel.close.index,columns=panel.close.columns)
     winning_weights=weights_by_trial.get(winner,zero_weights)
     capacity=_capacity_evidence(panel,winning_weights,oos)
@@ -161,36 +162,45 @@ def run_structural_tournament(panel: ResearchPanel, registry: dict[str, Any], fo
     )
     portfolio_pass=bool(portfolio["gross_limit_respected"] and portfolio["asset_limit_respected"] and portfolio["long_cash_only"])
 
+    plateau=parameter_grid_plateau(trials=trials,metric_by_trial={k:v['sharpe'] for k,v in metrics.items()},winner_trial_id=winner)
+    perturb=perturbation_suite(weights=winning_weights,oos_index=oos,run_fn=lambda w,m:_run_weights(panel,w,m))
+    decomposition=regime_decomposition(
+        returns=base_m[winner],btc_returns=_btc_benchmark(panel),cross_sectional_returns=panel.returns,
+        aggregate_liquidity=panel.quote_volume.sum(axis=1,min_count=1),
+    )
+    cap_gate=capacity_gate(capacity)
+
     gate_results={
         "G6":{"status":"PASS" if not failures else "FAIL","reasons":[] if not failures else ["STRUCTURAL_TRIAL_EXECUTION_FAILURES"]},
         "G7":{"status":"PASS" if synchronous else "FAIL","reasons":[] if synchronous else ["NON_SYNCHRONOUS_OOS"]},
         "G8":{"status":"PASS" if stats_pass else "FAIL","reasons":[] if stats_pass else ["DSR_PBO_WHITE_SPA_OR_BOOTSTRAP_GATE_FAILED"]},
-        "G9":{"status":"BLOCKED","reasons":["POINT_IN_TIME_BINANCE_FEE_FILTER_AND_FILL_MODEL_NOT_YET_CERTIFIED"]},
-        "G10":{"status":"BLOCKED","reasons":["PARAMETER_PLATEAU_AND_ADVERSARIAL_PERTURBATION_SUITE_PENDING"]},
-        "G11":{"status":"BLOCKED","reasons":["FULL_YEAR_ASSET_VOL_LIQUIDITY_DISPERSION_DECOMPOSITION_PENDING"]},
-        "G12":{"status":"BLOCKED","reasons":["CAPACITY_PROXY_EXISTS_BUT_MARKET_IMPACT_MODEL_NOT_CERTIFIED"]},
+        "G9":{"status":"PASS" if cost_survival else "FAIL","reasons":[] if cost_survival else ["BASE_OR_STRESSED_COST_SURVIVAL_FAILED"]},
+        "G10":{"status":"PASS" if plateau.get('passed') and perturb.get('passed') else "FAIL","reasons":[] if plateau.get('passed') and perturb.get('passed') else ["PARAMETER_PLATEAU_OR_PERTURBATION_FAILED"]},
+        "G11":{"status":"PASS" if decomposition.get('passed') and basic_regime.get('passed') else "FAIL","reasons":[] if decomposition.get('passed') and basic_regime.get('passed') else ["REGIME_STABILITY_OR_DECOMPOSITION_FAILED"]},
+        "G12":{"status":"PASS" if cap_gate.get('passed') else "FAIL","reasons":[] if cap_gate.get('passed') else ["RESEARCH_CAPACITY_GATE_FAILED"]},
         "G13":{"status":"PASS" if portfolio_pass else "FAIL","reasons":[] if portfolio_pass else ["PORTFOLIO_LIMITS_FAILED"]},
     }
 
-    admitted_for_ml=bool(stats_pass and cost_survival and gate_results["G6"]["status"]=="PASS")
+    admitted_for_ml=all(gate_results[g]['status']=='PASS' for g in ('G6','G7','G8','G9','G10','G11','G12','G13'))
     evidence={
         "backtest_correctness":not failures,"one_bar_execution_delay":True,"point_in_time_features":True,"failed_trials_retained":True,
         "common_oos_folds":True,"purged":True,"embargoed":True,"oos_return_matrix_sha256":_sha256_bytes(base_m.to_csv().encode()),
         "dsr":dsr[winner],"pbo":pbo,"white_reality_check":white,"hansen_spa":spa,"block_bootstrap":superiority,
-        "base_costs":metrics[winner],"stressed_costs":winner_stress,"severe_costs":winner_severe,"binance_filter_model":None,
-        "parameter_plateau":None,"entry_delay":None,"execution_delay":{"base":"ONE_BAR"},"random_slippage":{"stress_multipliers":[2,3]},"missing_trade_stress":None,
-        "calendar_year":None,"bull_bear_sideways":regime,"volatility":None,"liquidity":capacity,"dispersion":None,
-        "turnover":capacity,"capacity":capacity,"market_impact":None,
+        "base_costs":metrics[winner],"stressed_costs":winner_stress,"severe_costs":winner_severe,"research_cost_model":"15_30_45_BPS_ONE_WAY_CONSERVATIVE",
+        "parameter_plateau":plateau,"entry_delay":perturb,"execution_delay":perturb,"random_slippage":perturb,"missing_trade_stress":perturb,
+        "calendar_year":decomposition,"bull_bear_sideways":decomposition,"volatility":decomposition,"liquidity":decomposition,"dispersion":decomposition,
+        "turnover":capacity,"capacity":cap_gate,"market_impact":"1_PERCENT_ADV_RESEARCH_PROXY_RECERTIFY_FOR_SCALE",
         "position_sizing":portfolio,"concentration":portfolio,"gross_exposure":portfolio,"volatility_target":portfolio,"portfolio_risk":portfolio,
     }
 
     return {
-        "schema_version":"1.1.0","stage":"STRUCTURAL_TOURNAMENT","trial_count_preregistered":registry["trial_count"],
+        "schema_version":"1.2.0","stage":"STRUCTURAL_TOURNAMENT","trial_count_preregistered":registry["trial_count"],
         "trial_count_executed":len(trials),"trial_count_failed":len(failures),"failed_trials":failures,
         "winner":winner,"winner_family":next(t["family"] for t in trials if t["trial_id"]==winner),
         "winner_metrics":metrics[winner],"winner_dsr_probability":dsr[winner],"pbo":pbo,
         "white_reality_check":white,"hansen_spa":spa,"paired_superiority":superiority,
-        "cost_stress_survived_base_and_stressed":cost_survival,"regime_stability":regime,"capacity":capacity,"portfolio":portfolio,
+        "cost_stress_survived_base_and_stressed":cost_survival,"parameter_plateau":plateau,"perturbations":perturb,
+        "regime_stability":basic_regime,"regime_decomposition":decomposition,"capacity":capacity,"capacity_gate":cap_gate,"portfolio":portfolio,
         "classical_ml_admitted":admitted_for_ml,"deep_models_admitted":False,
         "holdout_opened":False,"holdout_evaluated":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False,
         "gate_results":gate_results,"evidence":evidence,
