@@ -1,0 +1,43 @@
+version: 1
+state: FROZEN_PRE_HOLDOUT_FOLDS
+calendar_timezone: UTC
+dataset_window:
+  first_observation: '2017-08-17T00:00:00Z'
+  last_observation: '2026-07-31T00:00:00Z'
+holdout:
+  policy: SINGLE_UNTOUCHED_365D_HOLDOUT
+  start: '2025-08-01T00:00:00Z'
+  end: '2026-07-31T23:59:59Z'
+  days: 365
+  opened: false
+  selection_access_forbidden: true
+  feature_engineering_access_forbidden: true
+  model_tuning_access_forbidden: true
+research_window:
+  start: '2017-08-17T00:00:00Z'
+  end: '2025-07-31T23:59:59Z'
+walk_forward:
+  train_days: 730
+  embargo_days: 7
+  test_days: 180
+  step_days: 180
+  common_across_all_trials: true
+  purge_labels_crossing_boundaries: true
+  folds:
+    - {id: WF01, train_start: '2017-08-17', train_end: '2019-08-16', test_start: '2019-08-24', test_end: '2020-02-19'}
+    - {id: WF02, train_start: '2018-02-13', train_end: '2020-02-12', test_start: '2020-02-20', test_end: '2020-08-17'}
+    - {id: WF03, train_start: '2018-08-12', train_end: '2020-08-10', test_start: '2020-08-18', test_end: '2021-02-13'}
+    - {id: WF04, train_start: '2019-02-08', train_end: '2021-02-06', test_start: '2021-02-14', test_end: '2021-08-12'}
+    - {id: WF05, train_start: '2019-08-07', train_end: '2021-08-05', test_start: '2021-08-13', test_end: '2022-02-08'}
+    - {id: WF06, train_start: '2020-02-03', train_end: '2022-02-01', test_start: '2022-02-09', test_end: '2022-08-07'}
+    - {id: WF07, train_start: '2020-08-01', train_end: '2022-07-31', test_start: '2022-08-08', test_end: '2023-02-03'}
+    - {id: WF08, train_start: '2021-01-28', train_end: '2023-01-27', test_start: '2023-02-04', test_end: '2023-08-02'}
+    - {id: WF09, train_start: '2021-07-27', train_end: '2023-07-26', test_start: '2023-08-03', test_end: '2024-01-29'}
+    - {id: WF10, train_start: '2022-01-23', train_end: '2024-01-22', test_start: '2024-01-30', test_end: '2024-07-27'}
+    - {id: WF11, train_start: '2022-07-22', train_end: '2024-07-20', test_start: '2024-07-28', test_end: '2025-01-23'}
+    - {id: WF12, train_start: '2023-01-18', train_end: '2025-01-16', test_start: '2025-01-24', test_end: '2025-07-22'}
+policy:
+  no_fold_changes_after_trial_execution: true
+  any_change_requires_new_research_generation: true
+  all_attempts_count_for_multiplicity: true
+  final_holdout_may_open_once_only_after_frozen_candidate: true
