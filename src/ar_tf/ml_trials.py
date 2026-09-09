@@ -44,19 +44,22 @@ def _feature_panels(panel: ResearchPanel) -> dict[str, pd.DataFrame]:
     }
 
 
-def _long_frame(features: dict[str, pd.DataFrame], target: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
+def _long_features(features: dict[str, pd.DataFrame], dates: pd.DatetimeIndex) -> pd.DataFrame:
     pieces=[]
-    for name, value in features.items():
-        s=value.reindex(dates).stack(dropna=False).rename(name)
-        pieces.append(s)
-    y=target.reindex(dates).stack(dropna=False).rename("target")
-    frame=pd.concat([*pieces,y],axis=1).replace([np.inf,-np.inf],np.nan).dropna()
+    for name,value in features.items():
+        pieces.append(value.reindex(dates).stack(dropna=False).rename(name))
+    frame=pd.concat(pieces,axis=1).replace([np.inf,-np.inf],np.nan).dropna()
     frame.index.names=["timestamp","market_id"]
     return frame
 
 
+def _long_training_frame(features: dict[str, pd.DataFrame], target: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
+    x=_long_features(features,dates)
+    y=target.reindex(dates).stack(dropna=False).rename("target")
+    return x.join(y,how="inner").replace([np.inf,-np.inf],np.nan).dropna()
+
+
 def _future_return(panel: ResearchPanel, horizon: int) -> pd.DataFrame:
-    # Feature timestamp t uses information through t-1; target begins after t.
     return panel.close.shift(-horizon) / panel.close - 1.0
 
 
@@ -70,6 +73,8 @@ def walk_forward_predictions(
     max_training_rows_per_fold: int = 200_000,
 ) -> MLPrediction:
     horizon=int(params["horizon_days"])
+    if horizon < 1:
+        raise ValueError("horizon_days must be positive")
     features=_feature_panels(panel)
     target=_future_return(panel,horizon)
     forecasts=[]; uncertainties=[]
@@ -77,10 +82,19 @@ def walk_forward_predictions(
     rng=np.random.default_rng(int(seed))
 
     for fold in _folds(folds_path):
-        train_dates=panel.close.index[(panel.close.index>=pd.Timestamp(fold["train_start"],tz="UTC")) & (panel.close.index<=pd.Timestamp(fold["train_end"],tz="UTC"))]
-        test_dates=panel.close.index[(panel.close.index>=pd.Timestamp(fold["test_start"],tz="UTC")) & (panel.close.index<=pd.Timestamp(fold["test_end"],tz="UTC"))]
-        train=_long_frame(features,target,train_dates)
-        test=_long_frame(features,target*0.0,test_dates).drop(columns="target")
+        train_start=pd.Timestamp(fold["train_start"],tz="UTC")
+        train_end=pd.Timestamp(fold["train_end"],tz="UTC")
+        # Purge any training label whose future-return horizon would cross the
+        # declared training boundary. Embargo begins only after this purged end.
+        effective_train_end=train_end-pd.Timedelta(days=horizon)
+        test_start=pd.Timestamp(fold["test_start"],tz="UTC")
+        test_end=pd.Timestamp(fold["test_end"],tz="UTC")
+        if effective_train_end < train_start:
+            raise ValueError("horizon consumes entire training fold")
+        train_dates=panel.close.index[(panel.close.index>=train_start)&(panel.close.index<=effective_train_end)]
+        test_dates=panel.close.index[(panel.close.index>=test_start)&(panel.close.index<=test_end)]
+        train=_long_training_frame(features,target,train_dates)
+        test=_long_features(features,test_dates)
         if train.empty or test.empty:
             continue
         if len(train)>max_training_rows_per_fold:
@@ -115,6 +129,8 @@ def walk_forward_predictions(
         raise ValueError("no walk-forward predictions produced")
     f=pd.concat(forecasts).groupby(level=[0,1]).last().unstack("market_id").sort_index()
     u=pd.concat(uncertainties).groupby(level=[0,1]).last().unstack("market_id").sort_index()
+    if bool((f.index >= panel.holdout_start).any()):
+        raise RuntimeError("ML prediction leaked into final holdout")
     return MLPrediction(forecast=f,uncertainty=u,training_rows=total_train,prediction_rows=total_pred)
 
 
