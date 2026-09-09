@@ -11,7 +11,7 @@ import yaml
 
 from .advanced_validation import BootstrapConfig, paired_block_bootstrap_superiority, regime_stability_test, white_reality_check
 from .backtest import CostModel, run_backtest
-from .research_panel import ResearchPanel, inverse_vol_weights, rolling_liquidity_universe
+from .research_panel import ResearchPanel, rolling_liquidity_universe
 from .spa_validation import SPAConfig, hansen_spa
 from .structural_trials import build_structural_weights
 from .validation import deflated_sharpe_probability, expected_max_sharpe, performance_metrics, probability_of_backtest_overfitting
@@ -48,8 +48,7 @@ def _run_weights(panel: ResearchPanel, weights: pd.DataFrame, multiplier: float)
 def _btc_benchmark(panel: ResearchPanel) -> pd.Series:
     cols=[c for c in panel.close.columns if c.startswith("BTCUSDT__")]
     if not cols: raise ValueError("BTC benchmark unavailable")
-    s=panel.returns[cols[0]].fillna(0.0)
-    return s
+    return panel.returns[cols[0]].fillna(0.0)
 
 
 def _equal_weight_benchmark(panel: ResearchPanel) -> pd.Series:
@@ -80,12 +79,14 @@ def _capacity_evidence(panel: ResearchPanel, weights: pd.DataFrame, oos: pd.Date
     daily_capacity=ratios.min(axis=1,skipna=True).replace([np.inf,-np.inf],np.nan).dropna()
     turnover=delta.sum(axis=1)
     return {
+        "method":"1_PERCENT_LAGGED_MEDIAN_QUOTE_VOLUME_PROXY",
         "participation_rate":participation,
         "median_one_way_turnover":float(turnover.median()),
         "p95_one_way_turnover":float(turnover.quantile(0.95)),
         "median_capacity_usd":float(daily_capacity.median()) if not daily_capacity.empty else None,
         "p05_capacity_usd":float(daily_capacity.quantile(0.05)) if not daily_capacity.empty else None,
         "positive_capacity":bool(not daily_capacity.empty and daily_capacity.quantile(0.05)>0),
+        "market_impact_model_complete":False,
     }
 
 
@@ -128,8 +129,8 @@ def run_structural_tournament(panel: ResearchPanel, registry: dict[str, Any], fo
     base_m=pd.DataFrame(base,index=oos).fillna(0.0)
     stress_m=pd.DataFrame(stressed,index=oos).fillna(0.0)
     severe_m=pd.DataFrame(severe,index=oos).fillna(0.0)
-    if base_m.isna().any(axis=None) or not base_m.index.equals(stress_m.index) or not base_m.index.equals(severe_m.index):
-        raise RuntimeError("non-synchronous OOS matrices")
+    synchronous=bool(base_m.index.equals(stress_m.index) and base_m.index.equals(severe_m.index) and not base_m.isna().any(axis=None))
+    if not synchronous: raise RuntimeError("non-synchronous OOS matrices")
 
     metrics={tid:performance_metrics(base_m[tid]) for tid in base_m.columns}
     sharpes=[m["sharpe"] for m in metrics.values()]
@@ -143,37 +144,48 @@ def run_structural_tournament(panel: ResearchPanel, registry: dict[str, Any], fo
     benchmark=_equal_weight_benchmark(panel).reindex(oos).fillna(0.0)
     white=white_reality_check(base_m,benchmark,BootstrapConfig(samples=2000,block=20,seed=17,alpha=0.05))
     spa=hansen_spa(base_m,benchmark,SPAConfig(reps=2000,block_size=20,seed=29,alpha=0.05))
-
     ranked=sorted(base_m.columns,key=lambda t:(dsr[t],metrics[t]["sharpe"],metrics[t]["expectancy"]),reverse=True)
     winner=ranked[0]
     superiority=paired_block_bootstrap_superiority(base_m[winner],benchmark)
     regime=regime_stability_test(base_m[winner],_market_regime(panel).reindex(oos))
-    capacity=_capacity_evidence(panel,weights_by_trial.get(winner,pd.DataFrame(0.0,index=panel.close.index,columns=panel.close.columns)),oos)
-    portfolio=_portfolio_evidence(panel,weights_by_trial.get(winner,pd.DataFrame(0.0,index=panel.close.index,columns=panel.close.columns)),oos)
+    zero_weights=pd.DataFrame(0.0,index=panel.close.index,columns=panel.close.columns)
+    winning_weights=weights_by_trial.get(winner,zero_weights)
+    capacity=_capacity_evidence(panel,winning_weights,oos)
+    portfolio=_portfolio_evidence(panel,winning_weights,oos)
 
     winner_stress=performance_metrics(stress_m[winner]); winner_severe=performance_metrics(severe_m[winner])
     cost_survival=bool(metrics[winner]["expectancy"]>0 and winner_stress["expectancy"]>0 and metrics[winner]["total_return"]>0 and winner_stress["total_return"]>0)
-
-    admitted_for_ml=bool(
-        metrics[winner]["expectancy"]>0 and metrics[winner]["total_return"]>0 and dsr[winner]>=0.95
-        and np.isfinite(pbo.get("pbo",np.nan)) and pbo["pbo"]<=0.20
-        and white.get("passed") and spa.get("passed") and superiority.get("passed") and cost_survival
+    stats_pass=bool(
+        dsr[winner]>=0.95 and np.isfinite(pbo.get("pbo",np.nan)) and pbo["pbo"]<=0.20
+        and white.get("passed") is True and spa.get("passed") is True and superiority.get("passed") is True
     )
+    portfolio_pass=bool(portfolio["gross_limit_respected"] and portfolio["asset_limit_respected"] and portfolio["long_cash_only"])
 
+    gate_results={
+        "G6":{"status":"PASS" if not failures else "FAIL","reasons":[] if not failures else ["STRUCTURAL_TRIAL_EXECUTION_FAILURES"]},
+        "G7":{"status":"PASS" if synchronous else "FAIL","reasons":[] if synchronous else ["NON_SYNCHRONOUS_OOS"]},
+        "G8":{"status":"PASS" if stats_pass else "FAIL","reasons":[] if stats_pass else ["DSR_PBO_WHITE_SPA_OR_BOOTSTRAP_GATE_FAILED"]},
+        "G9":{"status":"BLOCKED","reasons":["POINT_IN_TIME_BINANCE_FEE_FILTER_AND_FILL_MODEL_NOT_YET_CERTIFIED"]},
+        "G10":{"status":"BLOCKED","reasons":["PARAMETER_PLATEAU_AND_ADVERSARIAL_PERTURBATION_SUITE_PENDING"]},
+        "G11":{"status":"BLOCKED","reasons":["FULL_YEAR_ASSET_VOL_LIQUIDITY_DISPERSION_DECOMPOSITION_PENDING"]},
+        "G12":{"status":"BLOCKED","reasons":["CAPACITY_PROXY_EXISTS_BUT_MARKET_IMPACT_MODEL_NOT_CERTIFIED"]},
+        "G13":{"status":"PASS" if portfolio_pass else "FAIL","reasons":[] if portfolio_pass else ["PORTFOLIO_LIMITS_FAILED"]},
+    }
+
+    admitted_for_ml=bool(stats_pass and cost_survival and gate_results["G6"]["status"]=="PASS")
     evidence={
-        "backtest_correctness":True,"one_bar_execution_delay":True,"point_in_time_features":True,"failed_trials_retained":True,
-        "common_oos_folds":True,"purged":True,"embargoed":True,
-        "oos_return_matrix_sha256":_sha256_bytes(base_m.to_csv().encode()),
+        "backtest_correctness":not failures,"one_bar_execution_delay":True,"point_in_time_features":True,"failed_trials_retained":True,
+        "common_oos_folds":True,"purged":True,"embargoed":True,"oos_return_matrix_sha256":_sha256_bytes(base_m.to_csv().encode()),
         "dsr":dsr[winner],"pbo":pbo,"white_reality_check":white,"hansen_spa":spa,"block_bootstrap":superiority,
-        "base_costs":metrics[winner],"stressed_costs":winner_stress,"severe_costs":winner_severe,"binance_filter_model":"REQUIRED_AT_EXECUTION_ADAPTER_GATE",
-        "parameter_plateau":"PENDING_GRID_NEIGHBOR_EVALUATION","entry_delay":"PENDING","execution_delay":"ONE_BAR_BASELINE","random_slippage":"STRESS_MULTIPLIER_2X_3X","missing_trade_stress":"PENDING",
-        "calendar_year":"PENDING","bull_bear_sideways":regime,"volatility":regime,"liquidity":capacity,"dispersion":"PENDING",
-        "turnover":capacity,"capacity":capacity,"market_impact":"PARTICIPATION_RATE_CAP_PROXY",
+        "base_costs":metrics[winner],"stressed_costs":winner_stress,"severe_costs":winner_severe,"binance_filter_model":None,
+        "parameter_plateau":None,"entry_delay":None,"execution_delay":{"base":"ONE_BAR"},"random_slippage":{"stress_multipliers":[2,3]},"missing_trade_stress":None,
+        "calendar_year":None,"bull_bear_sideways":regime,"volatility":None,"liquidity":capacity,"dispersion":None,
+        "turnover":capacity,"capacity":capacity,"market_impact":None,
         "position_sizing":portfolio,"concentration":portfolio,"gross_exposure":portfolio,"volatility_target":portfolio,"portfolio_risk":portfolio,
     }
 
     return {
-        "schema_version":"1.0.0","stage":"STRUCTURAL_TOURNAMENT","trial_count_preregistered":registry["trial_count"],
+        "schema_version":"1.1.0","stage":"STRUCTURAL_TOURNAMENT","trial_count_preregistered":registry["trial_count"],
         "trial_count_executed":len(trials),"trial_count_failed":len(failures),"failed_trials":failures,
         "winner":winner,"winner_family":next(t["family"] for t in trials if t["trial_id"]==winner),
         "winner_metrics":metrics[winner],"winner_dsr_probability":dsr[winner],"pbo":pbo,
@@ -181,16 +193,15 @@ def run_structural_tournament(panel: ResearchPanel, registry: dict[str, Any], fo
         "cost_stress_survived_base_and_stressed":cost_survival,"regime_stability":regime,"capacity":capacity,"portfolio":portfolio,
         "classical_ml_admitted":admitted_for_ml,"deep_models_admitted":False,
         "holdout_opened":False,"holdout_evaluated":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False,
-        "evidence":evidence,
+        "gate_results":gate_results,"evidence":evidence,
         "decision":"ADMIT_CLASSICAL_ML" if admitted_for_ml else "NO_EDGE_VERIFIED",
-        "base_oos_returns":base_m,
-        "stressed_oos_returns":stress_m,
-        "severe_oos_returns":severe_m,
+        "base_oos_returns":base_m,"stressed_oos_returns":stress_m,"severe_oos_returns":severe_m,
     }
 
 
 def write_structural_tournament(result: dict[str, Any], output_dir: str | Path) -> None:
     root=Path(output_dir); root.mkdir(parents=True,exist_ok=True)
-    base=result.pop("base_oos_returns"); stressed=result.pop("stressed_oos_returns"); severe=result.pop("severe_oos_returns")
+    serializable=dict(result)
+    base=serializable.pop("base_oos_returns"); stressed=serializable.pop("stressed_oos_returns"); severe=serializable.pop("severe_oos_returns")
     base.to_csv(root/"structural-oos-base.csv"); stressed.to_csv(root/"structural-oos-stressed.csv"); severe.to_csv(root/"structural-oos-severe.csv")
-    (root/"structural-tournament.json").write_text(json.dumps(result,indent=2,sort_keys=True,default=lambda x: float(x) if isinstance(x,np.generic) else str(x))+"\n",encoding="utf-8")
+    (root/"structural-tournament.json").write_text(json.dumps(serializable,indent=2,sort_keys=True,default=lambda x: float(x) if isinstance(x,np.generic) else str(x))+"\n",encoding="utf-8")
