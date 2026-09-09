@@ -1,0 +1,74 @@
+version: 1
+state: RESEARCH_COST_MODEL_CONTRACT
+venue: BINANCE_SPOT
+base_currency: USDT
+research_costs:
+  one_way_bps:
+    BASE: 15.0
+    STRESSED: 30.0
+    SEVERE: 45.0
+  components_base_bps:
+    taker_fee: 10.0
+    half_spread: 2.0
+    slippage: 3.0
+  rule: CONSERVATIVE_BENCHMARK_NOT_ACCOUNT_SPECIFIC_FEE_CLAIM
+  profitability_must_survive: [BASE, STRESSED]
+  severe_is_break_test: true
+runtime_commission_snapshot:
+  required_before_testnet: true
+  endpoint_semantics: account.commission
+  required_fields:
+    - standardCommission.maker
+    - standardCommission.taker
+    - specialCommission
+    - taxCommission
+    - discount.enabledForAccount
+    - discount.enabledForSymbol
+    - discount.discountAsset
+    - discount.discount
+  policy: LOWER_RUNTIME_FEES_MAY_NOT_RETROACTIVELY_IMPROVE_RESEARCH_SELECTION
+symbol_filter_snapshot:
+  required_before_testnet: true
+  source: exchangeInfo
+  model_all_present_filters: true
+  required_filter_types_when_returned:
+    - PRICE_FILTER
+    - PERCENT_PRICE
+    - PERCENT_PRICE_BY_SIDE
+    - LOT_SIZE
+    - MARKET_LOT_SIZE
+    - MIN_NOTIONAL
+    - NOTIONAL
+    - ICEBERG_PARTS
+    - MAX_NUM_ORDERS
+    - MAX_NUM_ALGO_ORDERS
+  rounding:
+    price_to_tick_size: required
+    quantity_to_step_size: required
+    revalidate_notional_after_rounding: required
+execution_failure_semantics:
+  http_5xx: UNKNOWN_REQUIRES_RECONCILIATION
+  http_409_cancel_replace: PARTIAL_SUCCESS_POSSIBLE_REQUIRES_BOTH_LEGS_RECONCILED
+  http_429: RATE_LIMIT_BACKOFF
+  http_418: AUTO_BAN_STOP_NEW_REQUESTS
+  timeout: UNKNOWN_REQUIRES_RECONCILIATION
+  cancel_only_symbol_status: BLOCK_NEW_ORDERS_ALLOW_CANCEL_RECONCILIATION
+order_realism:
+  partial_fills: required
+  rejects: required
+  cancel_replace: required
+  self_trade_prevention: required
+  expiry_reason: required
+  stale_order_risk: required
+  one_bar_delay_is_minimum_research_delay: true
+signed_endpoint_2026:
+  percent_encode_before_signing: true
+  effective_date: '2026-01-15'
+provenance:
+  - https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/ws-api/account
+  - https://developers.binance.com/en/docs/products/spot/faqs/spot_glossary
+  - https://developers.binance.com/en/docs/products/spot-block-matching/change-log
+gate_policy:
+  G9_may_pass_research_cost_stress_with_conservative_scenarios: true
+  G12_capacity_requires_market_impact_beyond_volume_participation_proxy: true
+  G17_requires_runtime_filter_and_execution_contract_evidence: true
