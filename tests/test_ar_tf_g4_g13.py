@@ -8,7 +8,7 @@ from ar_tf.g4_g13_contract import evaluate_g4_g13
 from ar_tf.preregistration import build_preregistration
 
 
-def _write_minimal_dataset(root: Path):
+def _write_minimal_dataset(root: Path, holdout_close='103'):
     (root / 'market').mkdir(parents=True)
     cert = {
         'decision':'FROZEN_DATASET','frozen':True,'unresolved_count':0,'unresolved_gap_count':0,
@@ -20,8 +20,8 @@ def _write_minimal_dataset(root: Path):
     pd.DataFrame({
         'timestamp':['2025-07-30 00:00:00+00:00','2025-07-31 00:00:00+00:00','2025-08-01 00:00:00+00:00'],
         'symbol':['BTCUSDT']*3,'episode_id':[1]*3,
-        'open':[100,101,102],'high':[102,103,104],'low':[99,100,101],'close':[101,102,103],
-        'volume':[10,11,12],'quote_volume':[1000,1100,1200],'trade_count':[100,110,120],
+        'open':['100','101','DO_NOT_EVALUATE'],'high':['102','103','DO_NOT_EVALUATE'],'low':['99','100','DO_NOT_EVALUATE'],'close':['101','102',holdout_close],
+        'volume':['10','11','DO_NOT_EVALUATE'],'quote_volume':['1000','1100','DO_NOT_EVALUATE'],'trade_count':['100','110','DO_NOT_EVALUATE'],
     }).to_csv(root/'market'/'BTCUSDT__E01.csv',index=False)
 
 
@@ -35,11 +35,12 @@ research_window:
 """)
 
 
-def test_g4_audit_sees_holdout_boundaries_but_never_evaluates_holdout_values(tmp_path):
+def test_g4_audit_sees_holdout_timestamp_but_never_evaluates_holdout_numeric_values(tmp_path):
     ds=tmp_path/'ds'; _write_minimal_dataset(ds)
     folds=tmp_path/'folds.yaml'; _write_folds(folds)
     r=audit_frozen_dataset(ds,folds)
     assert r['decision']=='PASS'
+    assert r['research_rows_checked']==2
     assert r['holdout_rows_seen_structurally']==1
     assert r['holdout_values_evaluated'] is False
     assert r['holdout_opened'] is False
