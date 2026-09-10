@@ -5,14 +5,30 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version","generated_at","commit_sha","stage","decision","live_ready",
+    "schema_version","generated_at","semantic_snapshot_sha256","commit_sha","scope","stage","decision","live_ready",
     "certifications","identities","metrics","evidence","gates","blockers",
     "authorizations","governance","standards"
   ],
   "properties": {
-    "schema_version": {"const":"2026-09-06"},
+    "schema_version": {"const":"2026-09-10"},
     "generated_at": {"type":"string","format":"date-time"},
+    "semantic_snapshot_sha256": {"type":"string","pattern":"^[0-9a-f]{64}$"},
     "commit_sha": {"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "scope": {
+      "type":"object","additionalProperties":false,
+      "required":["strategy_id","asset_class","venue","market","timeframe","dataset_id","environment","bound","scope_sha256"],
+      "properties": {
+        "strategy_id":{"type":"string","minLength":1},
+        "asset_class":{"type":"string","minLength":1},
+        "venue":{"type":"string","minLength":1},
+        "market":{"type":"string","minLength":1},
+        "timeframe":{"type":"string","minLength":1},
+        "dataset_id":{"type":"string","minLength":1},
+        "environment":{"type":"string","minLength":1},
+        "bound":{"type":"boolean"},
+        "scope_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}
+      }
+    },
     "stage": {"enum":["RESEARCH","VERIFIED_BACKTEST","PAPER","TESTNET","SHADOW","LIVE_PILOT","SCALED_LIVE"]},
     "decision": {"enum":["NO_GO","LIVE_PRODUCTION_READY_VERIFIED"]},
     "live_ready": {"type":"boolean"},
@@ -45,14 +61,26 @@
       "required":["paper","testnet","shadow","live_pilot","scaled_live"],
       "properties":{"paper":{"type":"boolean"},"testnet":{"type":"boolean"},"shadow":{"type":"boolean"},"live_pilot":{"type":"boolean"},"scaled_live":{"type":"boolean"}}
     },
-    "governance": {"type":"object","additionalProperties":false,"required":["default_deny","probabilistic_authorization_forbidden","human_approval_required_for_live_capital","missing_evidence_means_no_go","holdout_may_not_be_used_for_selection_or_tuning","live_activation_requires_separate_human_authorization"],"properties":{"default_deny":{"const":true},"probabilistic_authorization_forbidden":{"const":true},"human_approval_required_for_live_capital":{"const":true},"missing_evidence_means_no_go":{"const":true},"holdout_may_not_be_used_for_selection_or_tuning":{"const":true},"live_activation_requires_separate_human_authorization":{"const":true}}},
+    "governance": {
+      "type":"object","additionalProperties":false,
+      "required":["default_deny","probabilistic_authorization_forbidden","human_approval_required_for_live_capital","missing_evidence_means_no_go","holdout_may_not_be_used_for_selection_or_tuning","live_activation_requires_separate_human_authorization","cross_scope_evidence_forbidden"],
+      "properties": {
+        "default_deny":{"const":true},"probabilistic_authorization_forbidden":{"const":true},"human_approval_required_for_live_capital":{"const":true},
+        "missing_evidence_means_no_go":{"const":true},"holdout_may_not_be_used_for_selection_or_tuning":{"const":true},"live_activation_requires_separate_human_authorization":{"const":true},"cross_scope_evidence_forbidden":{"const":true}
+      }
+    },
     "standards": {"type":"object","additionalProperties":true}
   },
   "$defs": {
     "evidenceItem": {
       "type":"object","additionalProperties":true,
-      "required":["status","artifact","sha256","source_commit_sha","issuer","verification"],
-      "properties":{"status":{"const":"PASS"},"artifact":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},"source_commit_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"issuer":{"type":"string","minLength":1},"verification":{"const":"VERIFIED"}}
+      "required":["status","artifact","sha256","source_commit_sha","issuer","verification","scope_sha256"],
+      "properties": {
+        "status":{"const":"PASS"},"artifact":{"type":"string","minLength":1},"sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+        "source_commit_sha":{"type":"string","pattern":"^[0-9a-f]{40}$"},"issuer":{"type":"string","minLength":1},"verification":{"const":"VERIFIED"},
+        "scope_sha256":{"type":"string","pattern":"^[0-9a-f]{64}$"},
+        "evidence_class":{"enum":["SAME_COMMIT","EXTERNAL_IMMUTABLE"]}
+      }
     },
     "evidenceDomain": {
       "type":"object","additionalProperties":false,
