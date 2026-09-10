@@ -47,7 +47,11 @@ def _feature_panels(panel: ResearchPanel) -> dict[str, pd.DataFrame]:
 def _long_features(features: dict[str, pd.DataFrame], dates: pd.DatetimeIndex) -> pd.DataFrame:
     pieces=[]
     for name,value in features.items():
-        pieces.append(value.reindex(dates).stack(dropna=False).rename(name))
+        # pandas 3 removed support for explicitly passing dropna to the new
+        # stack implementation. Missing feature rows are removed deterministically
+        # by the frame-level dropna below, so leaving stack() unspecified preserves
+        # the intended complete-case semantics across pandas 2.x/3.x.
+        pieces.append(value.reindex(dates).stack().rename(name))
     frame=pd.concat(pieces,axis=1).replace([np.inf,-np.inf],np.nan).dropna()
     frame.index.names=["timestamp","market_id"]
     return frame
@@ -55,7 +59,7 @@ def _long_features(features: dict[str, pd.DataFrame], dates: pd.DatetimeIndex) -
 
 def _long_training_frame(features: dict[str, pd.DataFrame], target: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
     x=_long_features(features,dates)
-    y=target.reindex(dates).stack(dropna=False).rename("target")
+    y=target.reindex(dates).stack().rename("target")
     return x.join(y,how="inner").replace([np.inf,-np.inf],np.nan).dropna()
 
 
