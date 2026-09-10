@@ -56,6 +56,27 @@ def test_certification_is_fail_closed():
     decision = certification_decision(metrics, dsr_probability=0.50, pbo=0.10, stress_metrics=[metrics])
     assert decision["decision"] == "NO_GO"
     assert "DEFLATED_SHARPE_GATE_FAILED" in decision["reasons"]
+    assert decision["paper_authorized"] is False
+
+
+def test_legacy_quant_gate_can_never_authorize_paper():
+    idx = pd.date_range("2024-01-01", periods=500, freq="D", tz="UTC")
+    r = pd.Series(0.001 + 0.0002 * np.sin(np.arange(len(idx)) / 7.0), index=idx)
+    metrics = performance_metrics(r)
+    decision = certification_decision(
+        metrics,
+        dsr_probability=1.0,
+        pbo=0.0,
+        stress_metrics=[metrics],
+        min_trades=1,
+        min_dsr=0.0,
+    )
+    assert decision["decision"] == "FROZEN_HOLDOUT_CANDIDATE"
+    assert decision["holdout_evaluated"] is False
+    assert decision["paper_authorized"] is False
+    assert decision["testnet_authorized"] is False
+    assert decision["live_authorized"] is False
+    assert decision["required_next_gate"] == "SINGLE_UNTOUCHED_365D_HOLDOUT"
 
 
 def test_expected_max_sharpe_uses_cross_trial_dispersion():
