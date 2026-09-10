@@ -40,15 +40,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/production_readiness/verified_dataset
-          python - <<'PY' >> "$GITHUB_ENV"
-          import json
-          from pathlib import Path
-          r=json.loads(Path('evidence/ar_tf_frozen_dataset_run52.json').read_text())
-          assert r['external_verification_required'] is True
-          print(f"DATA_ARTIFACT_ID={r['source_artifact_id']}")
-          print(f"DATA_RUN_ID={r['source_run_id']}")
-          print(f"DATA_ARTIFACT_DIGEST={r['source_artifact_digest']}")
-          PY
+          DATA_ARTIFACT_ID="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_artifact_id'])")"
+          DATA_RUN_ID="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_run_id'])")"
+          DATA_ARTIFACT_DIGEST="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_artifact_digest'])")"
+          test -n "$DATA_ARTIFACT_ID"
+          test -n "$DATA_RUN_ID"
+          test -n "$DATA_ARTIFACT_DIGEST"
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DATA_ARTIFACT_ID}" > artifacts/production_readiness/dataset-artifact-metadata.json
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DATA_ARTIFACT_ID}/zip" > artifacts/production_readiness/frozen-dataset.zip
           python - <<'PY'
@@ -56,6 +53,7 @@ jobs:
           from pathlib import Path
           root=Path('artifacts/production_readiness')
           ref=json.loads(Path('evidence/ar_tf_frozen_dataset_run52.json').read_text())
+          assert ref['external_verification_required'] is True
           metadata=json.loads((root/'dataset-artifact-metadata.json').read_text())
           assert int(metadata['id']) == int(ref['source_artifact_id'])
           assert metadata.get('expired') is False
