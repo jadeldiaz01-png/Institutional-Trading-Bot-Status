@@ -5,7 +5,7 @@ requires-python = ">=3.11"
 dependencies = ["numpy>=2.0", "pandas>=2.2", "scipy>=1.13", "pydantic>=2.8", "pyyaml>=6.0"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.3", "hypothesis>=6.112"]
+dev = ["pytest>=8.3", "hypothesis>=6.112", "jsonschema>=4.23"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
