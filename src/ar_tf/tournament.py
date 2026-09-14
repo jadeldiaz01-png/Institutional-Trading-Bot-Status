@@ -10,6 +10,7 @@ import pandas as pd
 
 from .validation import (
     deflated_sharpe_probability,
+    expected_max_sharpe,
     performance_metrics,
     probability_of_backtest_overfitting,
 )
@@ -77,11 +78,16 @@ def evaluate_trial(
 def aligned_trial_matrix(results: list[TrialResult]) -> pd.DataFrame:
     if len(results) < 2:
         raise ValueError("PBO requires at least two competing trials")
-    matrix = pd.concat({r.spec.trial_id: r.returns for r in results}, axis=1, join="inner").dropna(how="any")
-    if matrix.empty:
-        raise ValueError("no synchronous OOS observations across trials")
-    if matrix.columns.duplicated().any():
+    ids = [r.spec.trial_id for r in results]
+    if len(ids) != len(set(ids)):
         raise ValueError("duplicate trial_id values")
+    reference = results[0].returns.index
+    for result in results[1:]:
+        if not result.returns.index.equals(reference):
+            raise ValueError("all trials must use the exact same synchronous OOS timestamps")
+    matrix = pd.DataFrame({r.spec.trial_id: r.returns.to_numpy(dtype=float) for r in results}, index=reference)
+    if matrix.empty or matrix.isna().any(axis=None):
+        raise ValueError("invalid synchronous OOS trial matrix")
     return matrix
 
 
@@ -90,12 +96,7 @@ def select_candidate(
     gate: TournamentGate = TournamentGate(),
     pbo_slices: int = 8,
 ) -> dict:
-    """Select one research candidate without opening the frozen holdout.
-
-    Selection is deliberately fail-closed. PBO is computed across all registered
-    competing trials. DSR multiplicity uses the total number of trials. A trial
-    cannot win solely on headline Sharpe; all economic/statistical gates must pass.
-    """
+    """Select one research candidate without opening the frozen holdout."""
     if len(results) < gate.min_trials:
         return {"decision": "NO_GO", "reasons": ["INSUFFICIENT_REGISTERED_TRIALS"], "holdout_evaluated": False}
 
@@ -105,17 +106,23 @@ def select_candidate(
     if not np.isfinite(pbo):
         return {"decision": "NO_GO", "reasons": ["PBO_UNAVAILABLE"], "holdout_evaluated": False, "pbo": None}
 
+    all_trial_sharpes = [float(r.metrics.get("sharpe", np.nan)) for r in results]
+    dsr_benchmark = expected_max_sharpe(all_trial_sharpes)
     scored = []
-    total_trials = len(results)
     for result in results:
         r = result.returns
         m = result.metrics
         skew = float(r.skew()) if len(r) > 2 else 0.0
         kurtosis = float(r.kurtosis() + 3.0) if len(r) > 3 else 3.0
-        dsr = deflated_sharpe_probability(float(m.get("sharpe", np.nan)), len(r), skew, kurtosis, trials=total_trials)
+        dsr = deflated_sharpe_probability(
+            float(m.get("sharpe", np.nan)), len(r), skew, kurtosis,
+            benchmark_sharpe=dsr_benchmark,
+        )
         stress_ok = bool(result.stress_metrics) and all(
             np.isfinite(float(x.get("expectancy", np.nan)))
             and float(x.get("expectancy", -np.inf)) > gate.min_cost_stress_expectancy
+            and float(x.get("total_return", -np.inf)) > 0.0
+            and float(x.get("mean_log_return", -np.inf)) > 0.0
             for x in result.stress_metrics
         )
         reasons = []
@@ -123,6 +130,8 @@ def select_candidate(
             reasons.append("OOS_SHARPE_GATE_FAILED")
         if not np.isfinite(float(m.get("expectancy", np.nan))) or float(m.get("expectancy", -np.inf)) <= gate.min_oos_expectancy:
             reasons.append("OOS_EXPECTANCY_GATE_FAILED")
+        if float(m.get("total_return", -np.inf)) <= 0.0 or float(m.get("mean_log_return", -np.inf)) <= 0.0:
+            reasons.append("COMPOUNDED_GROWTH_GATE_FAILED")
         if not np.isfinite(dsr) or dsr < gate.min_dsr_probability:
             reasons.append("DSR_GATE_FAILED")
         if pbo > gate.max_pbo:
@@ -140,17 +149,17 @@ def select_candidate(
         })
 
     eligible = [x for x in scored if x["eligible"]]
+    common = {
+        "holdout_evaluated": False,
+        "pbo": pbo,
+        "pbo_combinations": pbo_stats["combinations"],
+        "dsr_benchmark_sharpe": dsr_benchmark,
+        "registered_trial_count": len(results),
+        "trials": scored,
+    }
     if not eligible:
-        return {
-            "decision": "NO_GO",
-            "reasons": ["NO_TRIAL_SURVIVED_ALL_GATES"],
-            "holdout_evaluated": False,
-            "pbo": pbo,
-            "pbo_combinations": pbo_stats["combinations"],
-            "trials": scored,
-        }
+        return {"decision": "NO_GO", "reasons": ["NO_TRIAL_SURVIVED_ALL_GATES"], **common}
 
-    # Lexicographic robustness-first ranking: DSR, then net OOS Sharpe, then expectancy.
     eligible.sort(
         key=lambda x: (
             float(x["dsr_probability"]),
@@ -163,11 +172,8 @@ def select_candidate(
     return {
         "decision": "FROZEN_HOLDOUT_CANDIDATE",
         "reasons": [],
-        "holdout_evaluated": False,
-        "pbo": pbo,
-        "pbo_combinations": pbo_stats["combinations"],
+        **common,
         "winner": winner,
-        "trials": scored,
         "gate": asdict(gate),
         "required_next_gate": "SINGLE_UNTOUCHED_365D_HOLDOUT",
     }
