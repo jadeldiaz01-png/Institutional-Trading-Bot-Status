@@ -36,12 +36,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
-      - name: Resolve and verify immutable frozen dataset
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Resolve immutable artifact identity
         run: |
           set -euo pipefail
-          mkdir -p artifacts/g4_g13/frozen_dataset
           python - <<'PY' >> "$GITHUB_ENV"
           import json
           from pathlib import Path
@@ -54,15 +51,26 @@ jobs:
           print(f"BOUND_RUN_ID={b['source_run_id']}")
           print(f"BOUND_ARTIFACT_DIGEST={b['source_artifact_digest']}")
           PY
+      - name: Verify and download immutable frozen dataset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -n "${BOUND_ARTIFACT_ID:-}"
+          test -n "${BOUND_RUN_ID:-}"
+          test -n "${BOUND_ARTIFACT_DIGEST:-}"
+          mkdir -p artifacts/g4_g13/frozen_dataset
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}" > artifacts/g4_g13/artifact-metadata.json
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}/zip" > artifacts/g4_g13/frozen-dataset.zip
           python - <<'PY'
-          import hashlib,json
+          import hashlib,json,os
           from pathlib import Path
           b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
           m=json.loads(Path('artifacts/g4_g13/artifact-metadata.json').read_text())
-          assert int(m['id'])==int(b['source_artifact_id']) and m.get('expired') is False
-          assert m.get('digest')==b['source_artifact_digest']
+          assert int(m['id'])==int(b['source_artifact_id'])==int(os.environ['BOUND_ARTIFACT_ID'])
+          assert m.get('expired') is False
+          assert m.get('digest')==b['source_artifact_digest']==os.environ['BOUND_ARTIFACT_DIGEST']
+          assert int(b['source_run_id'])==int(os.environ['BOUND_RUN_ID'])
           actual='sha256:'+hashlib.sha256(Path('artifacts/g4_g13/frozen-dataset.zip').read_bytes()).hexdigest()
           assert actual==b['source_artifact_digest']
           PY
