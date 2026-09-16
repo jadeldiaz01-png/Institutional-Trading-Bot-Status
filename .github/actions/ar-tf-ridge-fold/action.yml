@@ -1,0 +1,25 @@
+name: AR-TF durable Ridge fold
+summary: Execute exactly through one Ridge fold checkpoint and durably upload it
+inputs:
+  trial-index:
+    required: true
+  fold-id:
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: execute
+      shell: bash
+      env:
+        TRIAL_INDEX: ${{ inputs.trial-index }}
+        FOLD_ID: ${{ inputs.fold-id }}
+      run: python scripts/ar_tf_ridge_fold_step.py
+    - name: Persist newly committed fold outside the runner
+      if: steps.execute.outputs.new_fold == 'true'
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: ${{ steps.execute.outputs.artifact_name }}
+        path: ${{ steps.execute.outputs.fold_path }}/
+        if-no-files-found: error
+        retention-days: 90
+        overwrite: false
