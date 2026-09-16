@@ -4,6 +4,8 @@ import pytest
 
 from ar_tf.ridge_fold_resume import (
     EXPECTED_FOLDS,
+    checkpoint_manifest_path,
+    checkpoint_trial_key,
     commit_fold_checkpoint,
     load_committed_fold,
     validate_fold_inventory,
@@ -22,6 +24,18 @@ def lineage():
         "holdout_opened": False,
         "holdout_evaluated": False,
     }
+
+
+def test_filesystem_key_is_safe_and_preserves_canonical_trial_identity(tmp_path):
+    tid="ridge:06a28971e8429db0"
+    key=checkpoint_trial_key(tid)
+    assert key.startswith('trial-')
+    assert not any(c in key for c in '\\/:*?"<>|\r\n')
+    mp=commit_fold_checkpoint(tmp_path,trial_id=tid,fold_id=0,lineage=lineage(),payload={'x':1})
+    assert mp.parent.parent.name==key
+    manifest=json.loads(mp.read_text())
+    assert manifest['trial_id']==tid
+    assert manifest['trial_key']==key
 
 
 def test_transactional_checkpoint_round_trip(tmp_path):
@@ -79,13 +93,13 @@ def test_resume_equivalence_property(tmp_path):
     for interruption in (1, 6, 11):
         resumed = {}
         for fid in range(12):
-            mp = tmp_path / "run" / "ridge-00" / f"fold-{fid:02d}" / "manifest.json"
+            mp = checkpoint_manifest_path(tmp_path / "run", "ridge-00", fid)
             if fid <= interruption:
                 resumed[fid] = load_committed_fold(mp, expected_trial_id="ridge-00", expected_fold_id=fid, expected_lineage=lin)
             else:
                 payload = uninterrupted[fid]
                 commit_fold_checkpoint(tmp_path / f"resume-{interruption}", trial_id="ridge-00", fold_id=fid, lineage=lin, payload=payload)
-                rmp = tmp_path / f"resume-{interruption}" / "ridge-00" / f"fold-{fid:02d}" / "manifest.json"
+                rmp = checkpoint_manifest_path(tmp_path / f"resume-{interruption}", "ridge-00", fid)
                 resumed[fid] = load_committed_fold(rmp, expected_trial_id="ridge-00", expected_fold_id=fid, expected_lineage=lin)
         assert resumed == uninterrupted
 
@@ -161,7 +175,7 @@ def test_real_resume_fails_closed_on_rng_checkpoint_tamper(tmp_path):
     root=tmp_path/'cp'
     walk_forward_predictions(panel,fp,family='ridge',params=params,seed=7,max_training_rows_per_fold=80,
         checkpoint_root=root,checkpoint_trial_id='ridge-x',checkpoint_lineage=lin,stop_after_fold=0)
-    mp=root/'ridge-x'/'fold-00'/'manifest.json'; payload=mp.parent/'payload.json'
+    mp=checkpoint_manifest_path(root,'ridge-x',0); payload=mp.parent/'payload.json'
     data=json.loads(payload.read_text()); data['rng_state_before']['state']['state']+=1
     payload.write_text(json.dumps(data,sort_keys=True,separators=(',',':'))+'\n',encoding='utf-8')
     with pytest.raises(ValueError,match='digest'):
