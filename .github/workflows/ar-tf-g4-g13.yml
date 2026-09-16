@@ -1,0 +1,245 @@
+name: ar-tf-g4-g13
+
+on:
+  pull_request:
+    paths:
+      - 'config/ar_tf_frozen_dataset_binding_2026.json'
+      - 'config/ar_tf_edge_verification_2026.yaml'
+      - 'config/ar_tf_master_strategy_tournament_2026.yaml'
+      - 'config/ar_tf_trial_registry_v1.yaml'
+      - 'config/ar_tf_oos_folds_2026.yaml'
+      - 'config/ar_tf_execution_cost_contract_2026.yaml'
+      - 'src/ar_tf/bias_audit.py'
+      - 'src/ar_tf/preregistration.py'
+      - 'src/ar_tf/trial_registry.py'
+      - 'src/ar_tf/research_panel.py'
+      - 'src/ar_tf/structural_trials.py'
+      - 'src/ar_tf/ml_trials.py'
+      - 'src/ar_tf/structural_tournament.py'
+      - 'src/ar_tf/classical_tournament.py'
+      - 'src/ar_tf/robustness.py'
+      - 'src/ar_tf/g4_g13_contract.py'
+      - 'tests/test_ar_tf_g4_g13.py'
+      - 'tests/test_ar_tf_structural_tournament.py'
+      - 'pyproject.toml'
+      - '.github/workflows/ar-tf-g4-g13.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ar-tf-g4-g13-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  g4-g13-preholdout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Resolve immutable artifact identity from certified binding
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          assert b['binding_type']=='AR_TF_FROZEN_DATASET_BINDING'
+          assert b['decision']=='FROZEN_DATASET' and b['frozen'] is True
+          assert b['unresolved_count']==0
+          assert b['holdout_evaluated'] is False
+          assert b['paper_authorized'] is False
+          assert b['testnet_authorized'] is False
+          assert b['shadow_authorized'] is False
+          assert b['live_authorized'] is False
+          print(f"BOUND_ARTIFACT_ID={b['source_artifact_id']}")
+          print(f"BOUND_RUN_ID={b['source_run_id']}")
+          print(f"BOUND_ARTIFACT_DIGEST={b['source_artifact_digest']}")
+          PY
+      - name: Verify artifact metadata and download exact certified bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/g4_g13/frozen_dataset
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}" > artifacts/g4_g13/artifact-metadata.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          m=json.loads(Path('artifacts/g4_g13/artifact-metadata.json').read_text())
+          assert int(m['id']) == int(b['source_artifact_id'])
+          assert m.get('expired') is False
+          assert m.get('digest') == b['source_artifact_digest']
+          workflow_run=m.get('workflow_run') or {}
+          if workflow_run.get('id') is not None:
+              assert int(workflow_run['id']) == int(b['source_run_id'])
+          PY
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${BOUND_ARTIFACT_ID}/zip" > artifacts/g4_g13/frozen-dataset.zip
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          actual='sha256:'+hashlib.sha256(Path('artifacts/g4_g13/frozen-dataset.zip').read_bytes()).hexdigest()
+          assert actual == b['source_artifact_digest'], (actual, b['source_artifact_digest'])
+          PY
+          unzip -q artifacts/g4_g13/frozen-dataset.zip -d artifacts/g4_g13/frozen_dataset
+      - name: Verify complete certificate identity against immutable binding
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          b=json.loads(Path('config/ar_tf_frozen_dataset_binding_2026.json').read_text())
+          cert_path=Path('artifacts/g4_g13/frozen_dataset/dataset-freeze-certificate.json')
+          c=json.loads(cert_path.read_text())
+          cert_file_sha=hashlib.sha256(cert_path.read_bytes()).hexdigest()
+          assert cert_file_sha==b['dataset_freeze_certificate_file_sha256']
+          assert b['decision']=='FROZEN_DATASET' and b['frozen'] is True
+          assert c['decision']=='FROZEN_DATASET' and c['frozen'] is True
+          exact_fields={
+              'dataset_sha256':'dataset_sha256',
+              'verified_lifecycle_sha256':'verified_lifecycle_sha256',
+              'dataset_manifest_sha256':'dataset_manifest_sha256',
+              'market_event_registry_sha256':'market_event_registry_sha256',
+              'source_plan_sha256':'source_plan_sha256',
+              'source_plan_file_sha256':'source_plan_file_sha256',
+              'gap_report_sha256':'gap_report_sha256',
+              'checksum_report_sha256':'checksum_report_sha256',
+              'reconciliation_ledger_sha256':'reconciliation_ledger_sha256',
+          }
+          for cert_field,binding_field in exact_fields.items():
+              assert c[cert_field]==b[binding_field], (cert_field,c[cert_field],b[binding_field])
+          assert c['code_sha']==b['source_code_sha']
+          assert c['unresolved_count']==0
+          assert c['unresolved_gap_count']==0
+          assert c['unresolved_anomaly_count']==0
+          assert c['invalid_checksum_evidence_count']==0
+          assert c['source_plan_binding_verified'] is True
+          assert c['lifecycle_binding_verified'] is True
+          assert c['holdout_evaluated'] is False
+          assert c['paper_authorized'] is False
+          assert c['testnet_authorized'] is False
+          assert c['shadow_authorized'] is False
+          live=c.get('live_authorized',c.get('live_pilot_authorized',False))
+          assert live is False
+          PY
+      - name: Execute G4 bias audit without evaluating final-holdout values
+        run: |
+          python - <<'PY'
+          from ar_tf.bias_audit import audit_frozen_dataset, write_bias_audit
+          r=audit_frozen_dataset('artifacts/g4_g13/frozen_dataset','config/ar_tf_oos_folds_2026.yaml')
+          assert r['decision']=='PASS', r
+          assert r['holdout_values_evaluated'] is False
+          write_bias_audit(r,'artifacts/g4_g13/g4-bias-audit.json')
+          PY
+      - name: Freeze G5 exact 407-trial preregistration for this code/config/fold identity
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          from ar_tf.preregistration import build_preregistration, write_preregistration
+          b=build_preregistration(
+              dataset_binding_path='config/ar_tf_frozen_dataset_binding_2026.json',
+              registry_spec_path='config/ar_tf_trial_registry_v1.yaml',
+              strategy_config_path='config/ar_tf_master_strategy_tournament_2026.yaml',
+              folds_path='config/ar_tf_oos_folds_2026.yaml',
+              source_commit_sha=os.environ['SOURCE_SHA'],
+          )
+          assert b['manifest']['trial_count']==407 and b['manifest']['holdout_evaluated'] is False
+          write_preregistration(b,'artifacts/g4_g13/preregistration')
+          PY
+      - name: Execute 122 preregistered baseline and structural trials on common OOS folds
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from ar_tf.research_panel import load_research_panel
+          from ar_tf.structural_tournament import run_structural_tournament, write_structural_tournament
+          panel=load_research_panel('artifacts/g4_g13/frozen_dataset','config/ar_tf_oos_folds_2026.yaml')
+          registry=json.loads(Path('artifacts/g4_g13/preregistration/preregistered-trial-registry.json').read_text())
+          r=run_structural_tournament(panel,registry,'config/ar_tf_oos_folds_2026.yaml')
+          assert r['trial_count_executed']==122
+          assert r['holdout_evaluated'] is False and r['holdout_opened'] is False
+          write_structural_tournament(r,'artifacts/g4_g13/structural')
+          PY
+      - name: Emit explicit G4-G13 certificate from structural evidence
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from ar_tf.g4_g13_contract import evaluate_g4_g13, write_certificate
+          g4=json.loads(Path('artifacts/g4_g13/g4-bias-audit.json').read_text())
+          g5=json.loads(Path('artifacts/g4_g13/preregistration/g5-preregistration-manifest.json').read_text())
+          t=json.loads(Path('artifacts/g4_g13/structural/structural-tournament.json').read_text())
+          c=evaluate_g4_g13(bias_audit=g4,preregistration=g5,tournament=t)
+          assert c['gates']['G4']['status']=='PASS'
+          assert c['gates']['G5']['status']=='PASS'
+          assert c['holdout_evaluated'] is False
+          assert c['decision'] in {'NO_EDGE_VERIFIED','PRE_HOLDOUT_GATES_PASS'}
+          write_certificate(c,'artifacts/g4_g13/g4-g13-certificate.json')
+          print(json.dumps(c,indent=2))
+          PY
+      - name: Execute 27 preregistered Ridge challengers without opening holdout
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          from ar_tf.classical_tournament import run_ridge_stage, write_ridge_stage
+          from ar_tf.research_panel import load_research_panel
+
+          root=Path('artifacts/g4_g13')
+          structural=json.loads((root/'structural/structural-tournament.json').read_text())
+          assert structural['classical_ml_admitted'] is True
+          assert structural['holdout_evaluated'] is False and structural['holdout_opened'] is False
+
+          panel=load_research_panel(root/'frozen_dataset','config/ar_tf_oos_folds_2026.yaml')
+          registry=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text())
+          base=pd.read_csv(root/'structural/structural-oos-base.csv',index_col=0,parse_dates=True)
+          stressed=pd.read_csv(root/'structural/structural-oos-stressed.csv',index_col=0,parse_dates=True)
+          severe=pd.read_csv(root/'structural/structural-oos-severe.csv',index_col=0,parse_dates=True)
+
+          r=run_ridge_stage(
+              panel=panel,
+              registry=registry,
+              folds_path='config/ar_tf_oos_folds_2026.yaml',
+              structural_base=base,
+              structural_stressed=stressed,
+              structural_severe=severe,
+          )
+          assert r['trial_count_total']==149
+          assert r['ridge_trial_count']==27
+          assert not r['ridge_failures'], r['ridge_failures']
+          assert r['holdout_opened'] is False and r['holdout_evaluated'] is False
+          assert r['paper_authorized'] is False
+          assert r['testnet_authorized'] is False
+          assert r['live_authorized'] is False
+          assert r['decision'] in {'ADMIT_GRADIENT_BOOSTING','NO_EDGE_VERIFIED'}
+          write_ridge_stage(r,root/'classical/ridge')
+          print(json.dumps({
+              'decision':r['decision'],
+              'winner':r['winner'],
+              'winner_is_ridge':r['winner_is_ridge'],
+              'winner_dsr_probability':r['winner_dsr_probability'],
+              'pbo':r['pbo'],
+              'white_reality_check':r['white_reality_check'],
+              'hansen_spa':r['hansen_spa'],
+              'paired_superiority':r['paired_superiority'],
+              'holdout_opened':r['holdout_opened'],
+          },indent=2))
+          PY
+      - name: Run G4-G13, structural, and preregistration tests
+        run: pytest -q tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: ar-tf-g4-g13-preholdout-evidence
+          path: artifacts/g4_g13/
+          if-no-files-found: error
+          retention-days: 90

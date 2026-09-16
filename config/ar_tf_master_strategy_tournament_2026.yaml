@@ -1,0 +1,230 @@
+version: 1
+state: RESEARCH_ONLY
+null_hypothesis: NO_EDGE_VERIFIED
+
+global_rules:
+  dataset_must_be_frozen: true
+  dataset_sha256_required: true
+  lifecycle_sha256_required: true
+  holdout_days: 365
+  holdout_access_count_max: 1
+  all_trials_preregistered: true
+  all_failed_trials_retained: true
+  common_oos_timestamps: true
+  deterministic_seeds: true
+  no_strategy_promoted_from_public_results: true
+  no_profit_target_optimization: true
+  no_live_authorization: true
+
+research_ladder:
+  - stage: BASELINES
+    families:
+      - buy_and_hold_btc
+      - equal_weight_pit
+      - time_series_momentum
+      - moving_average_trend
+      - donchian_breakout
+      - volatility_targeted_trend
+      - short_term_reversal
+  - stage: STRUCTURAL_ALPHA
+    families:
+      - cross_sectional_momentum
+      - lagged_dispersion_momentum
+      - price_path_continuity
+      - volatility_conditioned_reversal
+      - volatility_breakout
+      - drawdown_derisked_trend
+      - structural_ensemble
+  - stage: CLASSICAL_ML
+    prerequisite: BASELINES_AND_STRUCTURAL_ALPHA_COMPLETE
+    families:
+      - ridge
+      - elastic_net
+      - random_forest
+      - xgboost_or_gradient_boosting
+      - catboost_if_available
+    admission:
+      require_incremental_net_value_vs_simple_baseline: true
+      require_cost_aware_no_trade_region: true
+      require_feature_ablation: true
+      require_calibration_or_uncertainty_estimate: true
+  - stage: DEEP_SEQUENCE_MODELS
+    prerequisite: CLASSICAL_ML_ECONOMICALLY_USEFUL
+    families:
+      - lstm
+      - gru
+      - tcn
+      - itransformer
+      - temporal_fusion_transformer
+    admission:
+      require_incremental_net_value_vs_tree_baseline: true
+      require_same_features_and_folds_for_model_comparison: true
+      require_seed_stability: true
+      require_parameter_count_report: true
+      require_training_compute_report: true
+      require_turnover_not_materially_worse_without_compensation: true
+  - stage: REPRESENTATION_AND_FACTOR_MODELS
+    prerequisite: DEEP_SEQUENCE_MODELS_JUSTIFIED_OR_REJECTED
+    families:
+      - autoencoder
+      - variational_autoencoder
+      - factor_vae
+      - dynamic_factor_model
+      - graph_neural_network
+    admission:
+      require_cross_asset_generalization: true
+      require_factor_stability: true
+      require_no_survivorship_features: true
+  - stage: REINFORCEMENT_LEARNING
+    prerequisite: DETERMINISTIC_POLICY_BASELINES_COMPLETE
+    families:
+      - ppo
+      - sac
+      - dqn_for_discrete_policy_only
+    admission:
+      require_identical_execution_simulator: true
+      require_classical_policy_baseline: true
+      require_multiple_seeds: true
+      require_offline_evaluation: true
+      require_no_direct_live_actions: true
+      require_action_constraints: true
+
+additional_data_tracks:
+  futures_perpetual:
+    families: [funding_carry, spot_perp_basis, term_structure, liquidation_state]
+    requires: [point_in_time_funding, mark_price, index_price, contract_lifecycle, fee_schedule]
+  microstructure:
+    families: [order_flow_imbalance, depth_imbalance, adverse_selection, maker_taker_selection, queue_model]
+    requires: [l2_or_l3_book, trades, event_timestamps, clock_quality, venue_filters]
+  cross_venue:
+    families: [lead_lag, basis_dislocation, execution_routing]
+    requires: [synchronized_clocks, venue_fees, withdrawal_or_transfer_constraints, latency_distribution]
+  alternative_data:
+    families: [news_sentiment, social_attention, onchain_activity]
+    requires: [point_in_time_release_timestamp, source_provenance, revision_policy, licensing]
+    rule: MAY_ONLY_BE_INCREMENTAL_CHALLENGER
+
+feature_groups:
+  price:
+    - lagged_returns
+    - multi_horizon_momentum
+    - breakout_distance
+    - trend_slope
+    - price_path_smoothness
+    - jump_fraction
+  volatility:
+    - realized_volatility
+    - downside_volatility
+    - volatility_of_volatility
+    - range_estimators
+    - volatility_regime
+  cross_sectional:
+    - momentum_rank
+    - return_dispersion
+    - cross_asset_correlation
+    - breadth
+    - liquidity_rank
+  volume_liquidity:
+    - dollar_volume
+    - turnover_proxy
+    - volume_surprise
+    - amihud_proxy_if_valid
+  microstructure_only_when_available:
+    - spread
+    - depth
+    - order_flow_imbalance
+    - trade_imbalance
+    - adverse_selection_proxy
+
+validation_stack:
+  temporal:
+    - rolling_walk_forward
+    - anchored_walk_forward
+    - purged_cv
+    - embargo
+  multiplicity:
+    - full_trial_ledger
+    - deflated_sharpe_ratio
+    - cscv_pbo
+    - white_reality_check
+    - hansen_spa
+  uncertainty:
+    - moving_block_bootstrap
+    - permutation_placebo
+    - monte_carlo_path_stress
+  robustness:
+    - parameter_plateau
+    - seed_stability
+    - feature_ablation
+    - entry_delay
+    - execution_delay
+    - random_slippage
+    - missing_trade_stress
+    - universe_size_10_15_20
+    - delisting_terminal_stress
+  decompositions:
+    - year
+    - asset
+    - bull_bear_sideways
+    - volatility
+    - liquidity
+    - dispersion
+    - concentration
+
+cost_model:
+  scenarios:
+    BASE:
+      description: contemporaneous realistic executable assumptions
+    STRESSED:
+      fee_spread_slippage_multiplier: 2.0
+      latency_worse: true
+      reject_rate_worse: true
+      partial_fill_worse: true
+    SEVERE:
+      fee_spread_slippage_multiplier: 3.0
+      liquidity_shock: true
+      market_impact_shock: true
+      execution_delay_shock: true
+  components:
+    - maker_taker_fee
+    - spread
+    - slippage
+    - market_impact
+    - latency
+    - partial_fill
+    - reject_probability
+    - min_notional
+    - tick_size
+    - step_size
+    - quantity_rounding
+    - price_rounding
+    - stale_order_risk
+
+promotion_gate_pre_holdout:
+  require_positive_net_expectancy: true
+  require_positive_compounded_growth: true
+  min_dsr_probability: 0.95
+  max_pbo: 0.20
+  require_white_rc_or_spa: true
+  require_paired_benchmark_superiority: true
+  require_parameter_plateau: true
+  require_regime_stability: true
+  require_base_cost_survival: true
+  require_stressed_cost_survival: true
+  require_liquidity_capacity_evidence: true
+  maximum_decision: FROZEN_HOLDOUT_CANDIDATE
+
+neural_network_policy:
+  networks_are_challengers_not_authorities: true
+  train_only_after_data_freeze: true
+  tune_only_inside_training_validation_windows: true
+  final_holdout_never_used_for_early_stopping: true
+  compare_to_linear_and_tree_models: true
+  require_multiple_random_seeds: true
+  require_feature_and_prediction_timestamp_audit: true
+  require_model_card: true
+  require_dataset_sha_binding: true
+  require_code_sha_binding: true
+  require_hyperparameter_registry: true
+  require_training_log_hash: true
+  require_prediction_artifact_hash: true
