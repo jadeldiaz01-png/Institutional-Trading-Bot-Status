@@ -1,0 +1,157 @@
+name: production-readiness
+
+on:
+  pull_request:
+    paths:
+      - 'src/ar_tf/production_readiness.py'
+      - 'src/ar_tf/evidence_validation.py'
+      - 'tests/test_production_readiness.py'
+      - 'tests/test_private_certifier_contract.py'
+      - 'schemas/production-readiness-manifest.schema.json'
+      - 'docs/PRODUCTION_READINESS_MANIFEST_2026.md'
+      - 'docs/PRIVATE_CERTIFICATION_INFRA_2026.md'
+      - 'evidence/ar_tf_frozen_dataset_run52.json'
+      - 'infra/private-certifier/**'
+      - '.github/workflows/private-certifier-runtime.yml'
+      - 'pyproject.toml'
+      - '.github/workflows/production-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  validate-manifest-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Test readiness evaluator, scope isolation, private certifier, and JSON Schema contracts
+        run: pytest -q tests/test_production_readiness.py tests/test_private_certifier_contract.py
+      - name: Verify frozen dataset run 52 metadata and exact bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/production_readiness/verified_dataset
+          DATA_ARTIFACT_ID="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_artifact_id'])")"
+          DATA_RUN_ID="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_run_id'])")"
+          DATA_ARTIFACT_DIGEST="$(python -c "import json; print(json.load(open('evidence/ar_tf_frozen_dataset_run52.json'))['source_artifact_digest'])")"
+          test -n "$DATA_ARTIFACT_ID"
+          test -n "$DATA_RUN_ID"
+          test -n "$DATA_ARTIFACT_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DATA_ARTIFACT_ID}" > artifacts/production_readiness/dataset-artifact-metadata.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${DATA_ARTIFACT_ID}/zip" > artifacts/production_readiness/frozen-dataset.zip
+          python - <<'PY'
+          import hashlib, json, zipfile
+          from pathlib import Path
+          root=Path('artifacts/production_readiness')
+          ref=json.loads(Path('evidence/ar_tf_frozen_dataset_run52.json').read_text())
+          assert ref['external_verification_required'] is True
+          metadata=json.loads((root/'dataset-artifact-metadata.json').read_text())
+          assert int(metadata['id']) == int(ref['source_artifact_id'])
+          assert metadata.get('expired') is False
+          assert metadata.get('digest') == ref['source_artifact_digest']
+          workflow_run=metadata.get('workflow_run') or {}
+          assert int(workflow_run.get('id', ref['source_run_id'])) == int(ref['source_run_id'])
+          assert workflow_run.get('head_sha', ref['source_code_sha']) == ref['source_code_sha']
+          archive_digest='sha256:'+hashlib.sha256((root/'frozen-dataset.zip').read_bytes()).hexdigest()
+          assert archive_digest == ref['source_artifact_digest']
+          with zipfile.ZipFile(root/'frozen-dataset.zip') as z:
+              z.extractall(root/'verified_dataset')
+          cert_path=root/'verified_dataset/dataset-freeze-certificate.json'
+          cert=json.loads(cert_path.read_text())
+          cert_sha=hashlib.sha256(cert_path.read_bytes()).hexdigest()
+          assert cert_sha == ref['dataset_freeze_certificate_file_sha256']
+          exact = {
+              'dataset_id':'dataset_id',
+              'code_sha':'source_code_sha',
+              'dataset_sha256':'dataset_sha256',
+              'verified_lifecycle_sha256':'verified_lifecycle_sha256',
+              'dataset_manifest_sha256':'dataset_manifest_sha256',
+              'market_event_registry_sha256':'market_event_registry_sha256',
+              'source_plan_sha256':'source_plan_sha256',
+              'source_plan_file_sha256':'source_plan_file_sha256',
+              'gap_report_sha256':'gap_report_sha256',
+              'checksum_report_sha256':'checksum_report_sha256',
+              'reconciliation_ledger_sha256':'reconciliation_ledger_sha256',
+          }
+          for cert_key,ref_key in exact.items():
+              assert cert[cert_key] == ref[ref_key], (cert_key,cert[cert_key],ref[ref_key])
+          for key in ('unresolved_count','unresolved_anomaly_count','unresolved_gap_count','invalid_checksum_evidence_count'):
+              assert cert[key] == 0
+          assert cert['decision']=='FROZEN_DATASET' and cert['frozen'] is True
+          assert cert['source_plan_binding_verified'] is True
+          assert cert['lifecycle_binding_verified'] is True
+          assert cert['holdout_evaluated'] is False
+          verified={**ref, **cert, 'certificate_file_sha256':cert_sha, 'external_verification':True}
+          (root/'verified-dataset-evidence.json').write_text(json.dumps(verified,indent=2,sort_keys=True)+'\n')
+          PY
+      - name: Generate scope-bound fail-closed manifest for evaluated SHA
+        env:
+          EVALUATED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from ar_tf.production_readiness import evaluate_readiness, write_readiness
+
+          sha=os.environ['EVALUATED_SHA']
+          cert=json.loads(Path('artifacts/production_readiness/verified-dataset-evidence.json').read_text())
+          scope={
+              'strategy_id':'AR-TF-v1',
+              'asset_class':'CRYPTO_SPOT',
+              'venue':'BINANCE_SPOT',
+              'market':'USDT_POINT_IN_TIME_UNIVERSE',
+              'timeframe':'1D',
+              'dataset_id':'ar-tf-binance-spot-usdt-1d-v1d2',
+              'environment':'RESEARCH',
+          }
+          r=evaluate_readiness(source_commit_sha=sha,scope=scope,dataset_certificate=cert)
+          assert r.manifest['scope']['bound'] is True
+          assert r.manifest['evidence']['dataset']['status']=='PASS'
+          assert r.manifest['gates'][1]['status']=='PASS'
+          assert r.manifest['gates'][3]['status']=='PASS'
+          assert r.manifest['decision']=='NO_GO'
+          assert r.manifest['live_ready'] is False
+          assert len(r.manifest['gates']) == 33
+          assert not any(r.manifest['authorizations'].values())
+          write_readiness(r, Path('artifacts/production_readiness'))
+          print({'file_sha256':r.canonical_sha256,'semantic_snapshot_sha256':r.manifest['semantic_snapshot_sha256']})
+          PY
+      - name: Verify generated artifact against schema and checksum
+        run: |
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
+
+          root=Path('artifacts/production_readiness')
+          manifest_path=root/'trading-production-readiness-manifest.json'
+          checksum_path=root/'trading-production-readiness-manifest.sha256'
+          schema=json.loads(Path('schemas/production-readiness-manifest.schema.json').read_text())
+          manifest=json.loads(manifest_path.read_text())
+          errors=list(Draft202012Validator(schema).iter_errors(manifest))
+          assert not errors, [e.message for e in errors]
+          expected=checksum_path.read_text().split()[0]
+          canonical=json.dumps(manifest, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+          actual=hashlib.sha256(canonical).hexdigest()
+          assert actual == expected
+          assert manifest['scope']['bound'] is True
+          assert manifest['governance']['cross_scope_evidence_forbidden'] is True
+          assert manifest['decision']=='NO_GO'
+          assert manifest['live_ready'] is False
+          print({'manifest_sha256': actual, 'semantic_snapshot_sha256':manifest['semantic_snapshot_sha256'], 'blockers': len(manifest['blockers'])})
+          PY
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: trading-production-readiness-manifest
+          path: artifacts/production_readiness/
+          if-no-files-found: error
+          retention-days: 30
