@@ -25,8 +25,8 @@ from ar_tf.research_panel import ResearchPanel
 
 def _fixture(tmp_path: Path):
     rng=np.random.default_rng(314159)
-    idx=pd.date_range("2020-01-01",periods=420,tz="UTC",freq="D")
-    cols=["A","B","C","D"]
+    idx=pd.date_range("2020-01-01",periods=420,tz="UTC",freq="D",name="timestamp")
+    cols=pd.Index(["A","B","C","D"],name="market_id")
     shocks=rng.normal(0.0003,0.02,size=(len(idx),len(cols)))
     close=pd.DataFrame(100*np.exp(np.cumsum(shocks,axis=0)),index=idx,columns=cols)
     volume=pd.DataFrame(rng.lognormal(12,0.5,size=close.shape),index=idx,columns=cols)
