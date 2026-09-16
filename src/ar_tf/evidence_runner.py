@@ -14,9 +14,12 @@ from .evidence_acquisition import (
     write_discovery_bundle,
 )
 from .evidence_parallel import acquire_usdt_daily_keys_parallel, verify_candidates_parallel
+from .event_lifecycle import apply_identity_break_registry
+from .gap_evidence import load_registry
 from .lifecycle_verifier import current_spot_statuses, file_sha256, write_verified_lifecycle
 
 DAILY_KLINE_PREFIX = "data/spot/daily/klines/"
+DEFAULT_EVENT_REGISTRY = "config/ar_tf_market_event_registry_2026.json"
 
 
 def resolve_symbols_without_monthly_1d(
@@ -69,6 +72,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="AR-TF v1-D2 historical evidence acquisition")
     p.add_argument("--output-dir", default="artifacts/ar_tf_v1d2")
     p.add_argument("--verified-lifecycle", default=None)
+    p.add_argument("--market-event-registry", default=DEFAULT_EVENT_REGISTRY)
     p.add_argument("--timeout", type=int, default=60)
     p.add_argument("--workers", type=int, default=16)
     p.add_argument("--skip-boundary-verification", action="store_true")
@@ -106,8 +110,11 @@ def main() -> None:
         verified, rejected = verify_candidates_parallel(
             candidates, months_by_symbol, timeout=args.timeout, workers=args.workers
         )
+        registry = load_registry(args.market_event_registry)
+        verified = apply_identity_break_registry(verified, registry)
         summary = write_verified_lifecycle(verified, rejected, args.output_dir)
         result["boundary_verification"] = summary
+        result["market_event_registry_sha256"] = __import__("ar_tf.evidence_acquisition", fromlist=["canonical_sha256"]).canonical_sha256(registry)
         lifecycle_path = str(Path(args.output_dir) / "verified-lifecycle.csv")
         if rejected:
             result["reasons"] = ["HISTORICAL_LIFECYCLE_HAS_REJECTED_EPISODES"] + (
