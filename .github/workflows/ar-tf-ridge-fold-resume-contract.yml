@@ -1,0 +1,39 @@
+name: ar-tf-ridge-fold-resume-contract
+
+on:
+  pull_request:
+    paths:
+      - 'src/ar_tf/ridge_fold_resume.py'
+      - 'src/ar_tf/ridge_resume.py'
+      - 'src/ar_tf/ridge_reduce.py'
+      - 'tests/test_ar_tf_ridge_fold_resume.py'
+      - '.github/workflows/ar-tf-ridge-fold-resume-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONHASHSEED: '0'
+
+jobs:
+  fold-resume-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: python -m pip install -e . pytest
+      - name: Verify fold checkpoint, fail-closed inventory and resume equivalence contract
+        run: |
+          pytest -q \
+            tests/test_ar_tf_ridge_fold_resume.py \
+            tests/test_ar_tf_ridge_resume.py \
+            tests/test_ar_tf_g4_g13.py \
+            tests/test_ar_tf_structural_tournament.py \
+            tests/test_ar_tf_trial_registry.py \
+            tests/test_ar_tf_dataset_binding.py
