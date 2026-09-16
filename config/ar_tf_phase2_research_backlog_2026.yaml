@@ -1,0 +1,150 @@
+version: 1
+status: research_backlog_only
+created_utc: 2026-09-16T01:56:00Z
+
+invariants:
+  mutate_current_407_trial_registry: false
+  mutate_current_g4_g13_thresholds: false
+  mutate_current_oos_folds: false
+  open_final_365d_holdout: false
+  paper_authorized: false
+  testnet_authorized: false
+  live_authorized: false
+  live_trading_enabled: false
+
+activation_condition:
+  current_tournament_terminal_certificate_required: true
+  allowed_terminal_decisions:
+    - NO_EDGE_VERIFIED
+    - FROZEN_HOLDOUT_CANDIDATE
+
+research_tracks:
+  - id: PH2_TSMOM_RECENCY_REPLICATION
+    class: alpha
+    priority: P1
+    data_requirement: certified_daily_pit_spot
+    hypothesis: time_series_momentum_may_be_more_robust_than_cross_sectional_momentum_net_of_costs
+    mandatory_comparators:
+      - long_cash_tsmom
+      - long_flat_tsmom
+      - xsmom
+      - buy_and_hold_btc
+    required_tests:
+      - common_oos_folds
+      - base_stressed_severe_costs
+      - paired_block_bootstrap
+      - dsr
+      - pbo
+      - white_rc
+      - hansen_spa
+      - parameter_plateau
+      - regime_decomposition
+
+  - id: PH2_INTRADAY_LIQUIDITY_STATE
+    class: microstructure_research
+    priority: P2
+    data_requirement: certified_l2_trades_clock_quality
+    forbidden_proxy: daily_ohlcv
+    features:
+      - quoted_spread
+      - realized_spread
+      - depth_adjusted_spread
+      - order_flow_imbalance
+      - trade_intensity
+      - realized_volatility
+      - session
+      - weekend
+    required_controls:
+      - strictly_lagged_features
+      - no_same_interval_target_leakage
+      - maker_taker_separation
+      - queue_fill_uncertainty
+      - adverse_selection_cost
+
+  - id: PH2_PORTFOLIO_ALLOCATOR_ABLATION
+    class: risk_overlay
+    priority: P2
+    alpha_credit_allowed: false
+    comparators:
+      - capped_equal_weight
+      - inverse_vol
+      - capped_inverse_vol
+      - hrp
+      - correlation_clustered_risk_budget
+    required_tests:
+      - turnover_costs
+      - spa_family_test
+      - parameter_stability
+      - stress_concentration
+
+  - id: PH2_EXECUTION_POLICY_MATRIX
+    class: execution
+    priority: P1
+    environment_minimum: TESTNET
+    alpha_credit_allowed: false
+    policies:
+      - limit_gtc
+      - post_only
+      - bbo_queue
+      - bbo_counterparty
+      - twap
+      - pov
+      - oco_otoco_protective
+    telemetry:
+      - implementation_shortfall_bps
+      - fill_ratio
+      - partial_fill_ratio
+      - reject_rate
+      - maker_taker_mix
+      - latency_p50_ms
+      - latency_p95_ms
+      - latency_p99_ms
+      - spread_capture_bps
+      - adverse_selection_bps
+    mandatory_failure_cases:
+      - websocket_gap
+      - rate_limit_exhaustion
+      - insufficient_liquidity
+      - partial_fill_timeout
+      - duplicate_client_order_id
+      - self_trade_prevention
+
+  - id: PH2_CAPACITY_IMPACT_GATE
+    class: production_economics
+    priority: P1
+    requirements:
+      - order_size_over_adv
+      - order_size_over_visible_depth
+      - participation_rate_sweep
+      - empirical_impact_curve
+      - liquidity_bucket_concentration
+      - stress_day_capacity
+
+  - id: PH2_FUNDING_BASIS_FUTURE_SLEEVE
+    class: deferred_derivatives
+    priority: P3
+    enabled: false
+    requires_separate_certification:
+      - funding_history
+      - contract_lifecycle
+      - collateral
+      - liquidation_mechanics
+      - borrow_costs
+      - basis_data
+
+admission_contract:
+  terminal_candidate: FROZEN_HOLDOUT_CANDIDATE
+  requires:
+    - frozen_dataset_scope_verified
+    - preregistered_hypothesis
+    - positive_net_oos_base
+    - stressed_cost_survival
+    - dsr_gate
+    - pbo_gate
+    - white_rc_or_hansen_spa_gate
+    - broad_parameter_plateau
+    - regime_year_asset_liquidity_stability
+    - seed_stability_if_stochastic
+    - strongest_simple_baseline_beaten
+    - holdout_untouched
+    - reproducible_hash_bundle
