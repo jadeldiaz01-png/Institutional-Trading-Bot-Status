@@ -83,7 +83,7 @@ jobs:
             shopt -s nullglob
             for d in restored/ar-tf-ridge-trial-${TRIAL_INDEX}-fold-*; do
               fid="${d##*-fold-}"
-              dest="ridge-checkpoints/${TRIAL_ID}/fold-${fid}"
+              dest="ridge-checkpoints/${TRIAL_KEY}/fold-${fid}"
               mkdir -p "$dest"
               cp "$d/manifest.json" "$d/payload.json" "$dest/"
             done
@@ -91,7 +91,7 @@ jobs:
       - name: Commit or verify Ridge fold 00
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-00/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-00/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 0
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 0
@@ -106,7 +106,7 @@ jobs:
       - name: Commit or verify Ridge fold 01
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-01/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-01/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 1
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 1
@@ -121,7 +121,7 @@ jobs:
       - name: Commit or verify Ridge fold 02
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-02/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-02/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 2
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 2
@@ -136,7 +136,7 @@ jobs:
       - name: Commit or verify Ridge fold 03
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-03/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-03/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 3
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 3
@@ -151,7 +151,7 @@ jobs:
       - name: Commit or verify Ridge fold 04
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-04/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-04/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 4
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 4
@@ -166,7 +166,7 @@ jobs:
       - name: Commit or verify Ridge fold 05
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-05/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-05/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 5
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 5
@@ -181,7 +181,7 @@ jobs:
       - name: Commit or verify Ridge fold 06
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-06/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-06/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 6
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 6
@@ -196,7 +196,7 @@ jobs:
       - name: Commit or verify Ridge fold 07
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-07/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-07/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 7
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 7
@@ -211,7 +211,7 @@ jobs:
       - name: Commit or verify Ridge fold 08
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-08/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-08/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 8
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 8
@@ -226,7 +226,7 @@ jobs:
       - name: Commit or verify Ridge fold 09
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-09/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-09/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 9
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 9
@@ -241,7 +241,7 @@ jobs:
       - name: Commit or verify Ridge fold 10
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-10/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-10/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 10
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 10
@@ -256,7 +256,7 @@ jobs:
       - name: Commit or verify Ridge fold 11
         run: |
           set -euo pipefail
-          if test -f "ridge-checkpoints/${TRIAL_ID}/fold-11/manifest.json"; then
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-11/manifest.json"; then
             python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 11
           else
             python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 11
