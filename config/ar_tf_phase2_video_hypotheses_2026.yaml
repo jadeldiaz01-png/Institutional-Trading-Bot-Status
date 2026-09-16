@@ -1,0 +1,117 @@
+version: 1
+status: PREREGISTRATION_SPEC_ONLY
+source: two user-supplied trading education videos reviewed 2026-09-16
+activation:
+  require_terminal_current_tournament: true
+  allowed_terminal_decisions: [NO_EDGE_VERIFIED, FROZEN_HOLDOUT_CANDIDATE]
+  mutate_current_407_trial_registry: false
+  mutate_current_oos_folds: false
+  mutate_current_thresholds: false
+  open_final_365d_holdout: false
+  paper_authorized: false
+  testnet_authorized: false
+  live_authorized: false
+
+multiple_testing:
+  count_every_registered_variant: true
+  family_wide_dsr: true
+  family_wide_pbo_cscv: true
+  white_reality_check: true
+  hansen_spa: true
+  paired_block_bootstrap: true
+  no_posthoc_parameter_additions: true
+
+tracks:
+  - id: PH2_VIDEO_RETURN_DEPENDENCE
+    data: certified_daily_pit_spot
+    concept: return autocorrelation and repeatability
+    features:
+      - {name: ret_1, formula: "close[t-1]/close[t-2]-1"}
+      - {name: ret_k, formula: "close[t-1]/close[t-1-k]-1", k: [3,7,14,30,60,90]}
+      - {name: rolling_acf_1, formula: "corr(r[t-w:t-1], r[t-w-1:t-2])", window: [20,60,120]}
+      - {name: sign_persistence, formula: "mean(sign(r_i)==sign(r_{i-1}))", window: [20,60]}
+      - {name: variance_ratio, formula: "Var(sum_k r)/(k*Var(r))", k: [2,5,10]}
+    targets: [forward_return_1d, forward_return_3d, forward_return_7d, forward_return_14d]
+
+  - id: PH2_VIDEO_BREAKOUT_STRUCTURE
+    data: certified_daily_pit_spot
+    concept: objective market structure and breakout follow-through
+    features:
+      - {name: donchian_distance, formula: "close[t-1]/max(high[t-L:t-1])-1", L: [20,55,90]}
+      - {name: breakout_flag, formula: "close[t-1] > max(high[t-L-1:t-2])", L: [20,55,90]}
+      - {name: breakout_strength_atr, formula: "(close[t-1]-rolling_max_high)/ATR", L: [20,55,90]}
+      - {name: retest_distance_atr, formula: "(low[t-1]-breakout_level)/ATR"}
+      - {name: followthrough_k, formula: "close[t-1]/breakout_level-1", k: [1,3,5]}
+    controls: [lagged_only, no_same_bar_breakout_fill, next_bar_execution, gap_aware]
+
+  - id: PH2_VIDEO_PATH_PERSISTENCE
+    data: certified_daily_pit_spot
+    concept: trend persistence versus noisy path
+    features:
+      - {name: path_efficiency, formula: "abs(close[t-1]-close[t-1-L])/sum(abs(diff(close)))", L: [10,20,60]}
+      - {name: directional_consistency, formula: "abs(sum(sign(r)))/L", L: [10,20,60]}
+      - {name: drawdown_from_peak, formula: "close[t-1]/max(close[t-L:t-1])-1", L: [20,60]}
+    comparators: [time_series_momentum, donchian_breakout, buy_and_hold_btc]
+
+  - id: PH2_VIDEO_REGIME_CONDITIONING
+    data: certified_daily_pit_spot
+    concept: pattern stability conditional on volatility and liquidity regime
+    features:
+      - {name: realized_vol, formula: "std(r[t-w:t-1])*sqrt(365)", window: [20,60]}
+      - {name: vol_percentile, formula: "percentile_rank(realized_vol over trailing 365d)"}
+      - {name: lagged_median_quote_volume, formula: "median(quote_volume[t-30:t-1])"}
+      - {name: liquidity_percentile, formula: "cross_sectional_rank(lagged_median_quote_volume)"}
+    required_slices: [low_vol, mid_vol, high_vol, low_liquidity, high_liquidity, bull, bear, sideways]
+
+  - id: PH2_VIDEO_ORDER_FLOW
+    data: certified_l2_and_trades_only
+    concept: large participant/order-flow imbalance
+    forbidden_proxies: [daily_ohlcv_as_order_flow, candle_color_as_aggressor_side, volume_only_as_signed_flow]
+    features:
+      - {name: ofi_l1, formula: "delta_bid_depth_if_bid_up - delta_ask_depth_if_ask_down with Cont-Kukanov-Stoikov event definition"}
+      - {name: normalized_ofi, formula: "OFI / contemporaneous_lagged_depth_scale"}
+      - {name: trade_imbalance, formula: "(aggressive_buy_qty-aggressive_sell_qty)/(total_aggressive_qty)"}
+      - {name: quoted_spread_bps, formula: "10000*(ask-bid)/mid"}
+      - {name: depth_imbalance, formula: "(bid_depth-ask_depth)/(bid_depth+ask_depth)"}
+      - {name: trade_intensity, formula: "trades/time"}
+    required_controls: [exchange_timestamp_quality, sequence_gap_detection, strictly_lagged_features, maker_taker_separation, queue_uncertainty, adverse_selection_cost]
+
+  - id: PH2_VIDEO_PATTERN_STABILITY
+    data: derived_from_each_track
+    concept: reject chart-pattern storytelling unless stable out of sample
+    tests:
+      - year_stability
+      - asset_stability
+      - fold_stability
+      - parameter_plateau
+      - perturbation_plus_minus_10pct
+      - regime_stability
+      - signal_decay
+      - turnover_and_capacity
+
+execution_contract:
+  signal_timestamp: close_t_minus_1_or_earlier
+  earliest_daily_fill: next_bar
+  cost_scenarios: [BASE, STRESSED, SEVERE]
+  no_zero_cost_results: true
+  include_fees: true
+  include_spread: true
+  include_slippage: true
+  include_market_impact_when_material: true
+
+metrics:
+  primary: [net_expectancy, annualized_sharpe, max_drawdown, turnover, hit_rate]
+  robustness: [dsr_probability, pbo, white_rc_pvalue, hansen_spa_pvalue, paired_bootstrap_ci]
+  stability: [parameter_plateau_width, regime_pass_fraction, asset_pass_fraction, year_pass_fraction]
+  economics: [capacity_usd, cost_break_even_bps, signal_half_life]
+
+gates:
+  data_integrity: {unresolved_count: 0, point_in_time: true, checksum_verified: true}
+  statistical: {dsr_min: 0.95, pbo_max: 0.20, familywise_test_required: true}
+  costs: {base_positive_net: true, stressed_survival: true}
+  stability: {parameter_plateau_required: true, regime_stability_required: true}
+  holdout: {must_remain_closed_during_selection: true}
+
+terminal_states:
+  - NO_EDGE_VERIFIED
+  - FROZEN_HOLDOUT_CANDIDATE

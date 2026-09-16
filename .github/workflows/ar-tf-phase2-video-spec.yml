@@ -1,0 +1,41 @@
+name: ar-tf-phase2-video-spec
+on:
+  pull_request:
+    paths:
+      - 'config/ar_tf_phase2_video_hypotheses_2026.yaml'
+      - 'src/ar_tf/phase2_video_features.py'
+      - 'tests/test_ar_tf_phase2_video_features.py'
+      - 'docs/AR_TF_PHASE2_VIDEO_DERIVED_RESEARCH_SPEC_2026.md'
+      - '.github/workflows/ar-tf-phase2-video-spec.yml'
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  validate-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with: {python-version: '3.11'}
+      - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
+      - name: Validate research-only governance
+        run: |
+          python - <<'PY'
+          import yaml
+          p='config/ar_tf_phase2_video_hypotheses_2026.yaml'
+          d=yaml.safe_load(open(p))
+          assert d['status']=='PREREGISTRATION_SPEC_ONLY'
+          a=d['activation']
+          assert a['mutate_current_407_trial_registry'] is False
+          assert a['mutate_current_oos_folds'] is False
+          assert a['mutate_current_thresholds'] is False
+          assert a['open_final_365d_holdout'] is False
+          assert a['paper_authorized'] is False
+          assert a['testnet_authorized'] is False
+          assert a['live_authorized'] is False
+          assert set(d['terminal_states'])=={'NO_EDGE_VERIFIED','FROZEN_HOLDOUT_CANDIDATE'}
+          of=[x for x in d['tracks'] if x['id']=='PH2_VIDEO_ORDER_FLOW'][0]
+          assert of['data']=='certified_l2_and_trades_only'
+          assert 'daily_ohlcv_as_order_flow' in of['forbidden_proxies']
+          PY
+      - name: Run deterministic feature-contract tests
+        run: pytest -q tests/test_ar_tf_phase2_video_features.py
