@@ -1,6 +1,7 @@
-version: 1
+version: 2
 status: research_backlog_only
 created_utc: 2026-09-16T01:56:00Z
+last_evidence_review_utc: 2026-09-16T03:45:00Z
 
 invariants:
   mutate_current_407_trial_registry: false
@@ -9,28 +10,79 @@ invariants:
   open_final_365d_holdout: false
   paper_authorized: false
   testnet_authorized: false
+  shadow_authorized: false
+  live_pilot_authorized: false
   live_authorized: false
   live_trading_enabled: false
+  current_generation_results_must_not_tune_phase2: true
 
 activation_condition:
   current_tournament_terminal_certificate_required: true
   allowed_terminal_decisions:
     - NO_EDGE_VERIFIED
     - FROZEN_HOLDOUT_CANDIDATE
+  phase2_trial_registry_must_be_frozen_before_execution: true
+  phase2_budget_must_be_fixed_before_execution: true
+  phase2_holdout_must_be_distinct_or_remain_sealed: true
+
+source_provenance:
+  - id: SRC_RISK_MANAGED_MOMENTUM_2025
+    type: peer_reviewed
+    title: Cryptocurrency market risk-managed momentum strategies
+    journal: Finance Research Letters
+    year: 2025
+    doi: 10.1016/j.frl.2025.107879
+    role: hypothesis_generation_only
+  - id: SRC_STATE_TRANSITION_MOMENTUM_2025
+    type: peer_reviewed
+    title: State transitions and momentum effect in cryptocurrency market
+    journal: Finance Research Letters
+    year: 2025
+    doi: 10.1016/j.frl.2025.108356
+    role: hypothesis_generation_only
+  - id: SRC_SURVIVOR_MOMENTUM_2026
+    type: peer_reviewed
+    title: On survivor cryptocurrency momentum
+    journal: Finance Research Letters
+    year: 2026
+    doi: 10.1016/j.frl.2026.109602
+    role: survivorship_and_liquidity_guardrail
+  - id: SRC_CRYPTO_FACTOR_MODEL_2026
+    type: peer_reviewed
+    title: Taming crypto anomalies - A Lasso-type factor model
+    journal: Research in International Business and Finance
+    year: 2026
+    doi: 10.1016/j.ribaf.2026.103298
+    role: hypothesis_generation_only
+  - id: SRC_TSMOM_RECENCY_2026
+    type: working_paper
+    title: Time-series Momentum in Cryptocurrency - A Published Edge that has Aged
+    year: 2026
+    ssrn_abstract_id: 7405060
+    role: recency_replication_motivation_only
+  - id: SRC_QUARTER_HOUR_2026
+    type: preprint
+    title: The Quarter-Hour Effect - Periodic Algorithmic Trading and Return Predictability in Cryptocurrency Futures
+    year: 2026
+    arxiv: 2607.09426
+    role: microstructure_hypothesis_generation_only
 
 research_tracks:
   - id: PH2_TSMOM_RECENCY_REPLICATION
     class: alpha
     priority: P1
+    evidence_sources: [SRC_TSMOM_RECENCY_2026]
     data_requirement: certified_daily_pit_spot
-    hypothesis: time_series_momentum_may_be_more_robust_than_cross_sectional_momentum_net_of_costs
+    hypothesis: time_series_momentum_may_be_more_robust_than_cross_sectional_momentum_net_of_costs_but_must_survive_recent_regimes
     mandatory_comparators:
       - long_cash_tsmom
       - long_flat_tsmom
       - xsmom
       - buy_and_hold_btc
+      - equal_weight_pit
     required_tests:
       - common_oos_folds
+      - recent_period_subsample_fixed_ex_ante
       - base_stressed_severe_costs
       - paired_block_bootstrap
       - dsr
@@ -39,10 +91,127 @@ research_tracks:
       - hansen_spa
       - parameter_plateau
       - regime_decomposition
+      - delisting_terminal_stress
+
+  - id: PH2_RISK_MANAGED_MOMENTUM
+    class: risk_overlay_and_alpha_challenger
+    priority: P1
+    evidence_sources: [SRC_RISK_MANAGED_MOMENTUM_2025]
+    data_requirement: certified_daily_pit_spot
+    hypothesis: ex_ante_volatility_scaling_may_improve_net_momentum_economics_without_using_future_information
+    mandatory_comparators:
+      - unscaled_same_signal
+      - capped_inverse_vol
+      - equal_weight_pit
+      - buy_and_hold_btc
+    controls:
+      - volatility_estimate_strictly_lagged
+      - leverage_forbidden_in_spot_research
+      - max_gross_exposure_1
+      - max_asset_weight_fixed_ex_ante
+      - turnover_and_cost_penalty
+    required_tests:
+      - same_signal_same_folds
+      - paired_net_return_test
+      - parameter_plateau
+      - stress_concentration
+      - regime_year_asset_liquidity_stability
+
+  - id: PH2_REGIME_CONDITIONED_MOMENTUM
+    class: alpha
+    priority: P1
+    evidence_sources: [SRC_STATE_TRANSITION_MOMENTUM_2025]
+    data_requirement: certified_daily_pit_spot
+    hypothesis: momentum_payoff_may_be_state_dependent_and_should_be_tested_with_ex_ante_state_rules
+    state_policy:
+      state_definition_must_be_frozen_ex_ante: true
+      states: [up_up, up_down, down_up, down_down]
+      probabilistic_regime_authorization_forbidden: true
+    required_tests:
+      - state_classifier_leakage_audit
+      - state_transition_confusion_stability
+      - common_oos_folds
+      - multiplicity_adjustment
+      - base_stressed_severe_costs
+      - parameter_plateau
+      - transition_frequency_minimum
+      - no_state_with_catastrophic_tail_dependence
+
+  - id: PH2_RESIDUAL_MOMENTUM_FACTOR_NEUTRAL
+    class: alpha
+    priority: P2
+    evidence_sources: [SRC_CRYPTO_FACTOR_MODEL_2026]
+    data_requirement: certified_daily_pit_spot
+    hypothesis: residualized_momentum_may_add_information_beyond_market_and_plain_momentum
+    candidate_factors:
+      - market
+      - momentum_2w
+      - residual_momentum
+    controls:
+      - factor_construction_strictly_point_in_time
+      - no_full_sample_residualization
+      - fit_only_inside_training_window
+      - same_oos_folds_as_simple_baselines
+      - residualization_ablation_required
+    required_tests:
+      - incremental_value_vs_plain_momentum
+      - dsr
+      - pbo
+      - white_rc_or_hansen_spa
+      - paired_block_bootstrap
+      - factor_loading_stability
+      - regime_stability
+
+  - id: PH2_HEAVY_TAIL_ROBUSTNESS_GATE
+    class: validation_and_risk
+    priority: P0
+    alpha_credit_allowed: false
+    hypothesis: crypto_return_and_strategy_distributions_require_tail_robust_evaluation_beyond_variance_only_metrics
+    metrics:
+      - expected_shortfall_95
+      - expected_shortfall_99
+      - max_drawdown
+      - drawdown_duration
+      - lower_partial_moment
+      - median_return
+      - mad_scale
+      - hill_tail_index_sensitivity
+      - tail_dependence_by_liquidity_bucket
+    statistical_controls:
+      - moving_block_bootstrap
+      - stationary_bootstrap_sensitivity
+      - winsorization_results_must_not_be_primary
+      - sharpe_is_supplementary_not_authoritative
+      - minimum_tail_event_count
+    fail_conditions:
+      - unstable_tail_index
+      - severe_cost_tail_expectancy_nonpositive
+      - liquidity_bucket_tail_concentration
+      - single_asset_dominates_tail_payoff
+
+  - id: PH2_SURVIVORSHIP_LIFECYCLE_CHALLENGE
+    class: data_integrity
+    priority: P0
+    evidence_sources: [SRC_SURVIVOR_MOMENTUM_2026]
+    alpha_credit_allowed: false
+    requirements:
+      - point_in_time_symbol_universe
+      - delisted_and_defaulted_markets_retained
+      - listing_and_delisting_timestamps
+      - symbol_renames_and_migrations
+      - terminal_loss_policy
+      - no_current_universe_backfill
+      - liquidity_eligibility_strictly_lagged
+    required_tests:
+      - survivor_only_placebo
+      - full_lifecycle_baseline
+      - delisting_terminal_stress
+      - missing_data_adversarial_test
 
   - id: PH2_INTRADAY_LIQUIDITY_STATE
     class: microstructure_research
     priority: P2
+    evidence_sources: [SRC_QUARTER_HOUR_2026]
     data_requirement: certified_l2_trades_clock_quality
     forbidden_proxy: daily_ohlcv
     features:
@@ -52,6 +221,7 @@ research_tracks:
       - order_flow_imbalance
       - trade_intensity
       - realized_volatility
+      - clock_phase
       - session
       - weekend
     required_controls:
@@ -60,6 +230,8 @@ research_tracks:
       - maker_taker_separation
       - queue_fill_uncertainty
       - adverse_selection_cost
+      - timestamp_clock_drift_monitoring
+      - venue_specific_model_only
 
   - id: PH2_PORTFOLIO_ALLOCATOR_ABLATION
     class: risk_overlay
@@ -76,6 +248,8 @@ research_tracks:
       - spa_family_test
       - parameter_stability
       - stress_concentration
+      - tail_risk_comparison
+      - capacity_comparison
 
   - id: PH2_EXECUTION_POLICY_MATRIX
     class: execution
@@ -90,6 +264,18 @@ research_tracks:
       - twap
       - pov
       - oco_otoco_protective
+    point_in_time_exchange_inputs:
+      - account_fee_tier
+      - bnb_fee_discount_state
+      - promotional_pair_fee_state
+      - price_filter
+      - lot_size
+      - min_notional_or_notional
+      - tick_size
+      - step_size
+      - self_trade_prevention_mode
+      - request_weight_limits
+      - order_rate_limits
     telemetry:
       - implementation_shortfall_bps
       - fill_ratio
@@ -101,6 +287,7 @@ research_tracks:
       - latency_p99_ms
       - spread_capture_bps
       - adverse_selection_bps
+      - cancel_replace_rate
     mandatory_failure_cases:
       - websocket_gap
       - rate_limit_exhaustion
@@ -108,10 +295,14 @@ research_tracks:
       - partial_fill_timeout
       - duplicate_client_order_id
       - self_trade_prevention
+      - exchange_filter_change
+      - fee_schedule_change
+      - stale_exchange_info
 
   - id: PH2_CAPACITY_IMPACT_GATE
     class: production_economics
     priority: P1
+    alpha_credit_allowed: false
     requirements:
       - order_size_over_adv
       - order_size_over_visible_depth
@@ -119,6 +310,8 @@ research_tracks:
       - empirical_impact_curve
       - liquidity_bucket_concentration
       - stress_day_capacity
+      - nonlinear_impact_sensitivity
+      - strategy_capacity_break_even
 
   - id: PH2_FUNDING_BASIS_FUTURE_SLEEVE
     class: deferred_derivatives
@@ -131,14 +324,37 @@ research_tracks:
       - liquidation_mechanics
       - borrow_costs
       - basis_data
+      - mark_and_index_price_lineage
+      - leverage_and_liquidation_stress
+
+production_cost_contract:
+  current_research_cost_model_is_not_execution_certification: true
+  base_model_components:
+    - trading_fee
+    - half_spread
+    - slippage
+  production_required_components:
+    - point_in_time_account_fee_tier
+    - pair_specific_promotion_state
+    - realized_spread
+    - empirical_slippage_distribution
+    - nonlinear_market_impact
+    - latency_cost
+    - partial_fill_cost
+    - reject_and_retry_cost
+    - cancel_replace_cost
+    - stale_order_cost
+  rule: measured_testnet_and_shadow_cost_distributions_replace_generic_assumptions_before_live_pilot
 
 admission_contract:
   terminal_candidate: FROZEN_HOLDOUT_CANDIDATE
   requires:
     - frozen_dataset_scope_verified
     - preregistered_hypothesis
+    - fixed_trial_budget
     - positive_net_oos_base
     - stressed_cost_survival
+    - heavy_tail_robustness_gate
     - dsr_gate
     - pbo_gate
     - white_rc_or_hansen_spa_gate
@@ -146,5 +362,6 @@ admission_contract:
     - regime_year_asset_liquidity_stability
     - seed_stability_if_stochastic
     - strongest_simple_baseline_beaten
+    - survivor_lifecycle_challenge_passed
     - holdout_untouched
     - reproducible_hash_bundle
