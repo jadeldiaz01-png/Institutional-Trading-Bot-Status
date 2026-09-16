@@ -34,6 +34,25 @@ def sha256_file(path: str | Path) -> str:
     return h.hexdigest()
 
 
+def checkpoint_trial_key(trial_id: str) -> str:
+    """Return a collision-resistant filesystem-safe locator for a scientific trial id.
+
+    Scientific identity remains the canonical ``trial_id`` stored in the manifest.
+    The derived key exists only so checkpoints can be uploaded/extracted safely on
+    GitHub Actions and Windows/NTFS-compatible tooling, where ':' and other
+    characters are forbidden in artifact paths.
+    """
+    if not trial_id:
+        raise ValueError("trial_id required")
+    return "trial-" + hashlib.sha256(trial_id.encode("utf-8")).hexdigest()[:32]
+
+
+def checkpoint_manifest_path(root: str | Path, trial_id: str, fold_id: int) -> Path:
+    if fold_id < 0 or fold_id >= EXPECTED_FOLDS_PER_TRIAL:
+        raise ValueError("fold_id out of range")
+    return Path(root) / checkpoint_trial_key(trial_id) / f"fold-{fold_id:02d}" / "manifest.json"
+
+
 def atomic_write_bytes(path: str | Path, data: bytes) -> None:
     """Commit bytes atomically on the local filesystem: tmp -> fsync -> rename."""
     dst = Path(path)
@@ -71,15 +90,16 @@ def commit_fold_checkpoint(
     if bool(lineage.get("holdout_opened")) or bool(lineage.get("holdout_evaluated")):
         raise ValueError("holdout must remain closed")
 
-    fold_dir = Path(root) / trial_id / f"fold-{fold_id:02d}"
+    manifest_path = checkpoint_manifest_path(root, trial_id, fold_id)
+    fold_dir = manifest_path.parent
     payload_path = fold_dir / "payload.json"
-    manifest_path = fold_dir / "manifest.json"
     payload_bytes = _canonical_json(payload) + b"\n"
     atomic_write_bytes(payload_path, payload_bytes)
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "state": "COMMITTED",
         "trial_id": trial_id,
+        "trial_key": checkpoint_trial_key(trial_id),
         "fold_id": fold_id,
         "payload_sha256": sha256_bytes(payload_bytes),
         "lineage": dict(lineage),
@@ -103,6 +123,9 @@ def load_committed_fold(
         raise ValueError("checkpoint is not COMMITTED")
     if manifest.get("trial_id") != expected_trial_id or int(manifest.get("fold_id", -1)) != expected_fold_id:
         raise ValueError("checkpoint identity mismatch")
+    expected_key = checkpoint_trial_key(expected_trial_id)
+    if manifest.get("trial_key") != expected_key or mp.parent.parent.name != expected_key:
+        raise ValueError("checkpoint filesystem identity mismatch")
     lineage = manifest.get("lineage", {})
     if lineage != dict(expected_lineage):
         raise ValueError("checkpoint lineage mismatch")
