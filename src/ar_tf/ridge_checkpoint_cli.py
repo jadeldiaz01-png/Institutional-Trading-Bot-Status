@@ -10,7 +10,7 @@ from typing import Any
 
 from .ml_trials import walk_forward_predictions
 from .research_panel import load_research_panel
-from .ridge_fold_resume import load_committed_fold
+from .ridge_fold_resume import checkpoint_manifest_path, checkpoint_trial_key, load_committed_fold
 from .ridge_resume import (
     MAX_TRAINING_ROWS_PER_FOLD,
     execute_trial_checkpointed,
@@ -46,6 +46,7 @@ def prepare(index: int, github_env: str | None) -> None:
     binding=json.loads(BINDING.read_text(encoding='utf-8'))
     cp02=os.environ['CP02_ARTIFACT_DIGEST']
     source_sha=os.environ['SOURCE_SHA']
+    trial_key=checkpoint_trial_key(trial['trial_id'])
     lineage={
         'parent_checkpoint_sha256':cp02.split(':',1)[1],
         'source_commit_sha':source_sha,
@@ -59,7 +60,7 @@ def prepare(index: int, github_env: str | None) -> None:
         'holdout_opened':False,
         'holdout_evaluated':False,
     }
-    context={'index':index,'trial_id':trial['trial_id'],'lineage':lineage,'runtime_fingerprint':runtime_fingerprint()}
+    context={'index':index,'trial_id':trial['trial_id'],'trial_key':trial_key,'lineage':lineage,'runtime_fingerprint':runtime_fingerprint()}
     (RUNTIME/'context.json').write_text(json.dumps(context,indent=2,sort_keys=True)+'\n',encoding='utf-8')
     panel=load_research_panel(ROOT/'frozen_dataset',FOLDS)
     with (RUNTIME/'panel.pkl').open('wb') as fh:
@@ -67,6 +68,7 @@ def prepare(index: int, github_env: str | None) -> None:
     if github_env:
         with Path(github_env).open('a',encoding='utf-8') as fh:
             fh.write(f"TRIAL_ID={trial['trial_id']}\n")
+            fh.write(f"TRIAL_KEY={trial_key}\n")
     print(json.dumps(context,sort_keys=True))
 
 
@@ -77,9 +79,9 @@ def _panel():
 
 def verify_fold(fold_id: int) -> None:
     ctx=_context(); tid=ctx['trial_id']
-    mp=CHECKPOINTS/tid/f'fold-{fold_id:02d}'/'manifest.json'
+    mp=checkpoint_manifest_path(CHECKPOINTS,tid,fold_id)
     load_committed_fold(mp,expected_trial_id=tid,expected_fold_id=fold_id,expected_lineage=ctx['lineage'])
-    print(f'VERIFIED {tid} fold={fold_id:02d}')
+    print(f'VERIFIED {tid} key={ctx["trial_key"]} fold={fold_id:02d}')
 
 
 def commit_through_fold(fold_id: int) -> None:
@@ -100,7 +102,7 @@ def finalize() -> None:
         checkpoint_root=CHECKPOINTS,lineage=ctx['lineage'],stop_after_fold=11,
     )
     write_trial(result,Path('ridge-trial'),ctx['lineage'])
-    print(json.dumps({'trial_id':ctx['trial_id'],'fold_checkpoint_count':len(result['fold_inventory']),'status':'COMPLETED'},sort_keys=True))
+    print(json.dumps({'trial_id':ctx['trial_id'],'trial_key':ctx['trial_key'],'fold_checkpoint_count':len(result['fold_inventory']),'status':'COMPLETED'},sort_keys=True))
 
 
 def main() -> None:
