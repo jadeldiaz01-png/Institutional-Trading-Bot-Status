@@ -1,0 +1,83 @@
+name: ar-tf-semantic-integrity
+
+on:
+  pull_request:
+    paths:
+      - 'src/ar_tf/semantic_integrity.py'
+      - 'tests/test_ar_tf_semantic_integrity.py'
+      - '.github/workflows/ar-tf-semantic-integrity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  investigate-frozen-dataset-semantics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 / Node 24
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0 / Node 24
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Download authentic frozen dataset artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: '9995675700'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/semantic/source
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > artifacts/semantic/run39.zip
+          unzip -q artifacts/semantic/run39.zip -d artifacts/semantic/source
+      - name: Scan all 739 market episodes and investigate every anomaly
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import pandas as pd
+          from ar_tf.semantic_integrity import scan_dataset, reconstruct_day_from_1m
+
+          root=Path('artifacts/semantic/source')
+          scan=scan_dataset(root)
+          investigations=[]
+          for anomaly in scan['anomalies']:
+              if not anomaly.get('timestamp'):
+                  investigations.append({**anomaly,'resolution':'UNRESOLVED_NO_TIMESTAMP'})
+                  continue
+              market_file=anomaly['market_file']
+              frame=pd.read_csv(root/'market'/market_file)
+              symbol=str(frame['symbol'].iloc[0])
+              day=pd.Timestamp(anomaly['timestamp'])
+              try:
+                  row, provenance=reconstruct_day_from_1m(symbol,day)
+                  investigations.append({**anomaly,'resolution':'VERIFIED_1M_RECONSTRUCTION_AVAILABLE','reconstructed_row':row,'provenance':provenance})
+              except Exception as exc:
+                  investigations.append({**anomaly,'resolution':'UNRESOLVED','error':f'{type(exc).__name__}:{exc}'})
+          report={
+              'schema_version':'1.0.0',
+              'parent_artifact_id':9995675700,
+              'parent_dataset_sha256':'c635a06864a232118a048871903808dccf902a28323c03fc747a3003a672020f',
+              'anomaly_count':scan['anomaly_count'],
+              'investigations':investigations,
+              'all_anomalies_reconstructable_from_verified_1m': bool(investigations) and all(x['resolution']=='VERIFIED_1M_RECONSTRUCTION_AVAILABLE' for x in investigations),
+              'holdout_evaluated':False,
+              'paper_authorized':False,
+              'testnet_authorized':False,
+              'live_authorized':False,
+          }
+          Path('artifacts/semantic/semantic-integrity-report.json').write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+          print(json.dumps(report,indent=2))
+          assert scan['anomaly_count'] > 0, 'expected G4-discovered anomalies are absent; investigate artifact identity'
+          assert report['all_anomalies_reconstructable_from_verified_1m'], report
+          PY
+      - name: Run semantic integrity tests
+        run: pytest -q tests/test_ar_tf_semantic_integrity.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ar-tf-semantic-integrity-investigation
+          path: artifacts/semantic/
+          if-no-files-found: error
+          retention-days: 90
