@@ -1,9 +1,11 @@
 name: AR-TF durable Ridge fold
-summary: Execute exactly through one Ridge fold checkpoint and durably upload it
+description: Execute exactly through one Ridge fold checkpoint and durably upload it
 inputs:
   trial-index:
+    description: Preregistered Ridge trial index in [0, 26]
     required: true
   fold-id:
+    description: Frozen walk-forward fold id in [0, 11]
     required: true
 runs:
   using: composite
