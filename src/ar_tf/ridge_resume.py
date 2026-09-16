@@ -3,12 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
 from .classical_tournament import _oos_index, _run, adjudicate_ridge_outputs
-from .ml_trials import prediction_to_weights, walk_forward_predictions
+from .ml_trials import FoldCheckpointPause, prediction_to_weights, walk_forward_predictions
 
 RIDGE_TRIAL_COUNT = 27
 
@@ -26,16 +26,38 @@ def trial_at(registry: dict[str, Any], index: int) -> dict[str, Any]:
     return ridge_trials(registry)[index]
 
 
-def execute_trial(*, panel, registry, folds_path, index: int) -> dict[str, Any]:
+def execute_trial(
+    *,
+    panel,
+    registry,
+    folds_path,
+    index: int,
+    checkpoint_root: str | Path | None = None,
+    checkpoint_lineage: Mapping[str, Any] | None = None,
+    pause_after_fold: int | None = None,
+) -> dict[str, Any]:
     trial = trial_at(registry, index)
     oos = _oos_index(panel, folds_path)
     p = trial['params']; tid = trial['trial_id']; failure = None
     try:
-        predictions = walk_forward_predictions(panel, folds_path, family='ridge', params=p, seed=int(trial['seed']), max_training_rows_per_fold=100_000)
+        predictions = walk_forward_predictions(
+            panel,
+            folds_path,
+            family='ridge',
+            params=p,
+            seed=int(trial['seed']),
+            max_training_rows_per_fold=100_000,
+            checkpoint_root=checkpoint_root,
+            checkpoint_trial_id=tid if checkpoint_root is not None else None,
+            checkpoint_lineage=checkpoint_lineage,
+            pause_after_fold=pause_after_fold,
+        )
         weights = prediction_to_weights(panel, predictions, cost_gate_bps=float(p['cost_gate_bps']))
         base = _run(panel, weights, 1.0).reindex(oos).fillna(0.0)
         stressed = _run(panel, weights, 2.0).reindex(oos).fillna(0.0)
         severe = _run(panel, weights, 3.0).reindex(oos).fillna(0.0)
+    except FoldCheckpointPause:
+        raise
     except Exception as exc:
         failure = {'trial_id': tid, 'error': type(exc).__name__, 'message': str(exc)}
         base = stressed = severe = pd.Series(0.0, index=oos)
