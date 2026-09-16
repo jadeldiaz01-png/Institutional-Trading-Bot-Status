@@ -15,6 +15,7 @@ from .classical_tournament import _oos_index, _run, adjudicate_ridge_outputs
 from .ml_trials import prediction_to_weights, walk_forward_predictions
 from .ridge_fold_resume import (
     EXPECTED_FOLDS_PER_TRIAL,
+    checkpoint_manifest_path,
     load_committed_fold,
     sha256_file,
     validate_fold_inventory,
@@ -81,7 +82,7 @@ def _fold_count(folds_path: str | Path) -> int:
 def _checkpoint_inventory(checkpoint_root: Path, trial_id: str, lineage: dict[str, Any]) -> list[dict[str, Any]]:
     records=[]
     for fold_id in range(EXPECTED_FOLDS_PER_TRIAL):
-        mp=checkpoint_root/trial_id/f'fold-{fold_id:02d}'/'manifest.json'
+        mp=checkpoint_manifest_path(checkpoint_root,trial_id,fold_id)
         payload=load_committed_fold(
             mp,
             expected_trial_id=trial_id,
