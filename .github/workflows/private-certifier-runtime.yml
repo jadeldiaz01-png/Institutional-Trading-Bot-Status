@@ -1,0 +1,99 @@
+name: private-certifier-runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact commit SHA being certified
+        required: true
+        type: string
+      tailscale_probe_fqdn:
+        description: Private tailnet FQDN ending in .ts.net
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  private-runtime-certification:
+    runs-on: trading-certifier-jit
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Verify exact SHA and ephemeral Kubernetes identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "${CI_RUNNER_EPHEMERAL:-}" = "true"
+          test -n "${K8S_POD_NAME:-}"
+          test -n "${K8S_NAMESPACE:-}"
+          test -n "${K8S_NODE_NAME:-}"
+          test "$K8S_NAMESPACE" = "arc-runners"
+      - name: Verify private Tailscale reachability through ephemeral sidecar
+        env:
+          PROBE_FQDN: ${{ inputs.tailscale_probe_fqdn }}
+        run: |
+          set -euo pipefail
+          case "$PROBE_FQDN" in
+            *.ts.net) ;;
+            *) echo "probe must be a private .ts.net FQDN" >&2; exit 1;;
+          esac
+          for i in $(seq 1 30); do
+            if curl --silent --show-error --fail --max-time 5 \
+              --proxy socks5h://localhost:1055 \
+              "https://${PROBE_FQDN}/healthz" >/tmp/tailscale-probe.txt; then
+              break
+            fi
+            sleep 2
+          done
+          test -s /tmp/tailscale-probe.txt
+      - name: Emit authentic runtime evidence
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/private-certifier
+          python - <<'PY'
+          import hashlib, json, os, pathlib
+          evidence = {
+              "schema_version": "1.0.0",
+              "evidence_type": "PRIVATE_CERTIFIER_RUNTIME",
+              "source_commit_sha": os.environ["GITHUB_SHA"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "github_run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "runner_name": os.environ.get("RUNNER_NAME"),
+              "runner_os": os.environ.get("RUNNER_OS"),
+              "runner_arch": os.environ.get("RUNNER_ARCH"),
+              "ephemeral_contract_verified": os.environ.get("CI_RUNNER_EPHEMERAL") == "true",
+              "kubernetes": {
+                  "pod": os.environ.get("K8S_POD_NAME"),
+                  "namespace": os.environ.get("K8S_NAMESPACE"),
+                  "node": os.environ.get("K8S_NODE_NAME"),
+                  "private_runner_namespace_verified": os.environ.get("K8S_NAMESPACE") == "arc-runners",
+              },
+              "tailscale": {
+                  "private_probe_verified": True,
+                  "transport": "SOCKS5_USERSpace_SIDECAR",
+              },
+              "authorizations": {
+                  "paper": False,
+                  "testnet": False,
+                  "shadow": False,
+                  "live_pilot": False,
+                  "live": False,
+              },
+          }
+          canonical=json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+          digest=hashlib.sha256(canonical).hexdigest()
+          root=pathlib.Path("artifacts/private-certifier")
+          (root/"private-certifier-runtime-evidence.json").write_text(json.dumps(evidence, indent=2, sort_keys=True)+"\n")
+          (root/"private-certifier-runtime-evidence.sha256").write_text(digest+"  private-certifier-runtime-evidence.json\n")
+          print(digest)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-certifier-runtime-evidence
+          path: artifacts/private-certifier/
+          if-no-files-found: error
+          retention-days: 30

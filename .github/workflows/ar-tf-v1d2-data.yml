@@ -8,7 +8,9 @@ on:
       - 'src/ar_tf/evidence_runner.py'
       - 'src/ar_tf/lifecycle_verifier.py'
       - 'src/ar_tf/historical_dataset.py'
+      - 'src/ar_tf/dataset_certifier.py'
       - 'tests/test_ar_tf_historical_fallback.py'
+      - 'tests/test_ar_tf_dataset_certifier.py'
       - '.github/workflows/ar-tf-v1d2-data.yml'
   workflow_dispatch:
 
@@ -70,18 +72,28 @@ jobs:
         with:
           name: ar-tf-v1d2-historical-evidence
           path: artifacts/ar_tf_v1d2
-      - name: Download, verify, and reconstruct complete OHLCV history
+      - name: Reconcile, verify, and freeze complete OHLCV history
+        env:
+          AR_TF_CODE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          python -m ar_tf.historical_dataset \
+          python -m ar_tf.dataset_certifier \
             --evidence-dir artifacts/ar_tf_v1d2 \
             --output-dir artifacts/ar_tf_v1d2_dataset \
             --workers 16 \
             --timeout 60
-      - name: Validate frozen dataset manifest
+      - name: Validate frozen dataset certificate
         run: |
           python - <<'PY'
           import json
-          d=json.load(open('artifacts/ar_tf_v1d2_dataset/dataset-manifest.json'))
+          from pathlib import Path
+
+          root=Path('artifacts/ar_tf_v1d2_dataset')
+          d=json.load(open(root/'dataset-manifest.json'))
+          c=json.load(open(root/'dataset-freeze-certificate.json'))
+          r=json.load(open(root/'reconciliation-ledger.json'))
+          g=json.load(open(root/'gap-report.json'))
+          q=json.load(open(root/'checksum-report.json'))
+
           assert d['point_in_time'] is True
           assert d['holdout_evaluated'] is False
           assert d['paper_authorized'] is False
@@ -89,14 +101,38 @@ jobs:
           assert d['market_episode_count'] > 0
           assert len(d['dataset_sha256']) == 64
           assert len(d['verified_lifecycle_sha256']) == 64
+
+          assert c['decision'] == 'FROZEN_DATASET'
+          assert c['frozen'] is True
+          assert c['unresolved_count'] == 0
+          assert c['unresolved_anomaly_count'] == 0
+          assert c['unresolved_gap_count'] == 0
+          assert c['invalid_checksum_evidence_count'] == 0
+          assert c['dataset_sha256'] == d['dataset_sha256']
+          assert c['verified_lifecycle_sha256'] == d['verified_lifecycle_sha256']
+          assert c['holdout_evaluated'] is False
+          assert c['paper_authorized'] is False
+          assert c['testnet_authorized'] is False
+          assert c['live_authorized'] is False
+          assert r['unresolved_count'] == 0
+          assert g['unresolved_gap_count'] == 0
+          assert q['all_source_checksums_verified'] is True
+
           print(json.dumps({
-            'dataset_sha256': d['dataset_sha256'],
-            'archive_count': d['archive_count'],
-            'reconstructed_archive_count': d['reconstructed_archive_count'],
-            'market_episode_count': d['market_episode_count'],
-            'historical_symbol_count': d['historical_symbol_count'],
-            'lifecycle_sha256': d['verified_lifecycle_sha256'],
-            'holdout_evaluated': d['holdout_evaluated'],
+            'decision': c['decision'],
+            'dataset_sha256': c['dataset_sha256'],
+            'lifecycle_sha256': c['verified_lifecycle_sha256'],
+            'source_plan_sha256': c['source_plan_sha256'],
+            'reconciliation_ledger_sha256': c['reconciliation_ledger_sha256'],
+            'gap_report_sha256': c['gap_report_sha256'],
+            'checksum_report_sha256': c['checksum_report_sha256'],
+            'resolved_anomaly_count': c['resolved_anomaly_count'],
+            'unresolved_count': c['unresolved_count'],
+            'archive_count': c['archive_count'],
+            'market_episode_count': c['market_episode_count'],
+            'historical_symbol_count': c['historical_symbol_count'],
+            'code_sha': c['code_sha'],
+            'holdout_evaluated': c['holdout_evaluated'],
           }, indent=2))
           PY
       - name: Upload historical dataset evidence
