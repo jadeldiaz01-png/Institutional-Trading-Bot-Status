@@ -7,6 +7,8 @@ on:
       - 'tests/**'
       - 'config/ar_tf_v1.yaml'
       - 'config/ar_tf_v1d_tournament.yaml'
+      - 'config/ar_tf_edge_verification_2026.yaml'
+      - 'config/ar_tf_master_strategy_tournament_2026.yaml'
       - 'schemas/ar_tf_dataset.schema.json'
       - 'pyproject.toml'
       - '.github/workflows/ar-tf-research.yml'

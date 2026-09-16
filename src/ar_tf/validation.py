@@ -106,7 +106,7 @@ def monte_carlo_drawdowns(returns: pd.Series, paths: int = 2000, seed: int = 11,
 def expected_max_sharpe(trial_sharpes: list[float] | np.ndarray) -> float:
     """Bailey-Lopez de Prado expected maximum Sharpe benchmark.
 
-    Uses the cross-trial dispersion of the *registered trial Sharpe ratios* and
+    Uses the cross-trial dispersion of the registered trial Sharpe ratios and
     their total count N. Inputs and output are on the same annualized scale.
     """
     x = np.asarray(trial_sharpes, dtype=float)
@@ -131,12 +131,7 @@ def deflated_sharpe_probability(
     benchmark_sharpe: float = 0.0,
     periods_per_year: int = 365,
 ) -> float:
-    """Scale-consistent probabilistic/deflated Sharpe probability.
-
-    Both observed and benchmark Sharpe are supplied on the annualized scale and
-    de-annualized internally. In a tournament, ``benchmark_sharpe`` must be the
-    expected maximum Sharpe computed from all preregistered trial Sharpes.
-    """
+    """Scale-consistent probabilistic/deflated Sharpe probability."""
     if n_obs < 3 or periods_per_year <= 0 or not np.isfinite(observed_sharpe) or not np.isfinite(benchmark_sharpe):
         return 0.0
     scale = math.sqrt(float(periods_per_year))
@@ -200,6 +195,11 @@ def certification_decision(
     max_pbo: float = 0.20,
     min_dsr: float = 0.95,
 ) -> dict:
+    """Legacy quantitative gate retained for compatibility but unable to authorize PAPER.
+
+    Passing this limited gate can produce only a pre-holdout research candidate.
+    PAPER requires the separate untouched-holdout and forward-evidence gates.
+    """
     reasons = []
     if metrics.get("n", 0) < min_trades:
         reasons.append("INSUFFICIENT_OBSERVATIONS")
@@ -220,4 +220,13 @@ def certification_decision(
         for m in stress_metrics
     ):
         reasons.append("COST_STRESS_FAILED")
-    return {"decision": "PAPER_CANDIDATE" if not reasons else "NO_GO", "reasons": reasons}
+    passed = not reasons
+    return {
+        "decision": "FROZEN_HOLDOUT_CANDIDATE" if passed else "NO_GO",
+        "reasons": reasons,
+        "holdout_evaluated": False,
+        "paper_authorized": False,
+        "testnet_authorized": False,
+        "live_authorized": False,
+        "required_next_gate": "SINGLE_UNTOUCHED_365D_HOLDOUT" if passed else "REMEDIATE_FAILED_RESEARCH_GATES",
+    }

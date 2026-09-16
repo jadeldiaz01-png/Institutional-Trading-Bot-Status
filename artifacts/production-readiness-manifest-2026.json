@@ -1,0 +1,491 @@
+{
+  "schema_version": "1.0.0",
+  "manifest_type": "INSTITUTIONAL_PRODUCTION_READINESS_2026",
+  "project": "Institutional Trading Bot Status",
+  "generated_from_parent_sha": "8c630225850b0c9c15874c339a9a821e7e19fa57",
+  "status": "NO_GO",
+  "production_ready": false,
+  "live_trading_enabled": false,
+  "real_capital_authorized": false,
+  "governing_principle": "NO EDGE VERIFIED UNTIL REPRODUCIBLE NET EVIDENCE EXISTS",
+  "evidence_policy": {
+    "missing_evidence": "NO_GO",
+    "code_exists_is_not_certified": true,
+    "config_exists_is_not_certified": true,
+    "workflow_success_without_artifact_is_not_certified": true,
+    "probabilistic_ai_output_can_authorize_critical_action": false,
+    "critical_action_requires": [
+      "identity",
+      "policy",
+      "idempotency",
+      "audit",
+      "evidence",
+      "rollback",
+      "kill_switch",
+      "human_approval_when_high_risk"
+    ]
+  },
+  "stage_model": [
+    "RESEARCH",
+    "VERIFIED_BACKTEST",
+    "PAPER",
+    "TESTNET",
+    "SHADOW",
+    "LIVE_PILOT",
+    "SCALED_LIVE"
+  ],
+  "current_stage": "RESEARCH",
+  "quantitative_gate": {
+    "state": "NO_EDGE_VERIFIED",
+    "p0_qe1": "BLOCKED",
+    "dataset_freeze_required": true,
+    "holdout_evaluated": false,
+    "paper_authorized": false,
+    "testnet_authorized": false,
+    "live_authorized": false,
+    "latest_dataset_certification_evidence": {
+      "workflow_run_id": 33692641111,
+      "workflow": "ar-tf-v1d2-data",
+      "code_sha": "d027a704e1fc5f24e012fc5a8830cbb432d4184b",
+      "decision": "NO_GO",
+      "frozen": false,
+      "unresolved_count": 16,
+      "unresolved_gap_count": 15,
+      "unresolved_anomaly_count": 0,
+      "invalid_checksum_evidence_count": 0,
+      "all_source_checksums_verified": true,
+      "provisional_dataset_sha256": "77039bba50dee57cdae4b330f96f59a60c73bcef116af33a2080d288f37923a2",
+      "provisional_hash_must_not_unlock_tournament": true,
+      "artifact_id": 9871221529,
+      "artifact_digest": "sha256:c2479e2e7ae61f5f1935fcd0a5e6384b360becc61718240571faf56596f64bf5"
+    },
+    "entry_conditions_for_preregistered_tournament": {
+      "decision": "FROZEN_DATASET",
+      "frozen": true,
+      "unresolved_count": 0,
+      "unresolved_gap_count": 0,
+      "unresolved_anomaly_count": 0,
+      "invalid_checksum_evidence_count": 0,
+      "all_source_checksums_verified": true,
+      "dataset_sha256_required": true,
+      "verified_lifecycle_sha256_required": true,
+      "holdout_must_remain_unopened": true
+    },
+    "tournament_contract": {
+      "immutable_preregistration_required": true,
+      "common_folds_required": true,
+      "failed_trials_count_toward_multiplicity": true,
+      "cost_scenarios": ["BASE", "STRESSED", "SEVERE"],
+      "required_statistics": [
+        "block_bootstrap",
+        "permutation_or_placebo_when_applicable",
+        "deflated_sharpe_ratio",
+        "CSCV_PBO",
+        "Hansen_SPA",
+        "White_Reality_Check",
+        "multiple_testing_correction"
+      ],
+      "required_robustness": [
+        "parameter_plateaus",
+        "entry_delay",
+        "execution_delay",
+        "random_slippage",
+        "random_missing_trades",
+        "fee_stress",
+        "spread_stress",
+        "liquidity_stress",
+        "regime_perturbation",
+        "capacity_analysis"
+      ],
+      "allowed_pre_holdout_outcomes": [
+        "NO_EDGE_VERIFIED",
+        "FROZEN_HOLDOUT_CANDIDATE"
+      ]
+    }
+  },
+  "runtime_architecture": {
+    "control_plane": [
+      "Control API",
+      "Operator Console",
+      "Approval Engine",
+      "Policy Decision Point",
+      "Identity and Access",
+      "Command Bus",
+      "Event Bus",
+      "Durable Workflow Orchestrator",
+      "Global and per-strategy Kill Switch"
+    ],
+    "data_plane": [
+      "Dataset Registry",
+      "Point-in-Time Feature Store",
+      "Model Registry",
+      "Signal Store",
+      "Order and Fill Store",
+      "Position and Balance State",
+      "Evidence Ledger"
+    ],
+    "execution_plane": [
+      "Signal",
+      "Fail-Closed Risk Engine",
+      "Durable OrderIntent",
+      "OMS",
+      "EMS",
+      "Exchange Adapter",
+      "Reconciliation",
+      "Evidence Ledger"
+    ],
+    "ai_runtime_plane": [
+      "Agent Registry",
+      "Capability Registry",
+      "Model Router",
+      "AI Gateway",
+      "MCP Gateway",
+      "Optional A2A Gateway",
+      "Sandbox Runtime",
+      "Memory Service",
+      "Knowledge Graph"
+    ],
+    "observability_plane": [
+      "OpenTelemetry",
+      "Prometheus-compatible metrics",
+      "Grafana-compatible dashboards",
+      "Structured logs",
+      "Distributed traces",
+      "Alerting",
+      "SLO and Error Budget evaluation"
+    ]
+  },
+  "execution_invariants": {
+    "order_fields_required": [
+      "client_order_id",
+      "idempotency_key",
+      "synchronized_timestamp",
+      "strategy_id",
+      "strategy_version",
+      "signal_id",
+      "risk_decision_id",
+      "approval_id",
+      "policy_decision_id"
+    ],
+    "unknown_is_terminal_without_reconciliation": true,
+    "duplicate_order_submission_for_same_intent_forbidden": true,
+    "risk_engine_unavailable": "BLOCK",
+    "policy_engine_unavailable": "BLOCK",
+    "critical_telemetry_unavailable": "SAFE_MODE",
+    "reconciliation_degraded": "BLOCK_NEW_RISK",
+    "agent_withdrawal_permission": false,
+    "ai_can_place_real_orders": false
+  },
+  "identity_and_secrets": {
+    "target": "OpenBao OIDC/JWT workload identity with short-lived credentials",
+    "repository_baseline_observed": "2.6.1",
+    "minimum_security_baseline": "2.6.2",
+    "minimum_baseline_reason": "GHSA-rh46-vc3j-w2w3 affects versions <2.6.2",
+    "static_master_tokens_allowed": false,
+    "long_lived_exchange_secrets_in_ci_allowed": false,
+    "container_digest_pin_required": true,
+    "runtime_certified": false
+  },
+  "policy_engine": {
+    "technology": "OPA/Rego",
+    "mode": "deny-by-default",
+    "decision_logging_required": true,
+    "decision_id_must_flow_to_evidence_ledger": true,
+    "bundle_or_equivalent_immutable_policy_version_required": true,
+    "policy_unavailable_behavior": "FAIL_CLOSED",
+    "runtime_certified": false
+  },
+  "observability": {
+    "baseline": "OpenTelemetry Collector",
+    "evaluated_2026_baseline": "v0.159.0",
+    "required_signals": ["traces", "metrics", "logs"],
+    "domain_telemetry_required": [
+      "orders",
+      "fills",
+      "risk_decisions",
+      "policy_decisions",
+      "approvals",
+      "reconciliation",
+      "model_calls",
+      "agent_tool_calls",
+      "costs"
+    ],
+    "required_sre_metrics": [
+      "availability",
+      "error_rate",
+      "latency_p50",
+      "latency_p95",
+      "latency_p99",
+      "queue_depth",
+      "retries",
+      "timeouts",
+      "circuit_breakers",
+      "MTTD",
+      "MTTR",
+      "RPO",
+      "RTO"
+    ],
+    "runtime_certified": false
+  },
+  "software_supply_chain": {
+    "slsa": "v1.2",
+    "provenance_required": true,
+    "sbom_required": true,
+    "artifact_signing": "Sigstore/Cosign v3 bundle-capable workflow",
+    "keyless_oidc_preferred": true,
+    "in_toto_attestations_required": true,
+    "policy_validation_of_attestations_required": true,
+    "promote_artifact_not_rebuild": true,
+    "github_actions_exact_sha_pin_required": true,
+    "observed_ar_tf_floating_actions": [
+      "actions/checkout@v4",
+      "actions/setup-python@v5",
+      "actions/download-artifact@v4",
+      "actions/upload-artifact@v4"
+    ],
+    "node24_compatibility_required": true,
+    "supply_chain_certified": false
+  },
+  "agentic_systems": {
+    "MCP": {
+      "evaluated_spec": "2026-07-28",
+      "admission": "TRIAL",
+      "requirements": [
+        "authorization hardening",
+        "method/tool header policy enforcement",
+        "egress allowlist",
+        "tool schema validation",
+        "capability allowlist",
+        "per-tool audit",
+        "prompt-injection evaluation",
+        "tool-poisoning evaluation",
+        "data-exfiltration evaluation",
+        "resource budgets"
+      ],
+      "trading_authority": "NONE"
+    },
+    "A2A": {
+      "evaluated_spec": "v1.0.x",
+      "admission": "ASSESS",
+      "requirements": [
+        "signed Agent Cards where applicable",
+        "peer allowlist",
+        "version negotiation tests",
+        "cross-tenant isolation",
+        "message schema validation",
+        "timeout and retry policy",
+        "independent authorization at receiving side"
+      ],
+      "trading_authority": "NONE"
+    },
+    "memory_and_knowledge": {
+      "memory_classes": [
+        "working",
+        "session",
+        "episodic",
+        "semantic",
+        "procedural"
+      ],
+      "knowledge_graph_required_for_claim_lineage": true,
+      "claim_classes": [
+        "CLAIM",
+        "INFERENCE",
+        "HYPOTHESIS",
+        "VERIFIED_FACT",
+        "REJECTED",
+        "STALE"
+      ],
+      "memory_auto_promotes_to_fact": false
+    }
+  },
+  "exchange_contract": {
+    "venue": "Binance Spot",
+    "testnet_before_live": true,
+    "official_api_only": true,
+    "historical_exchange_rules_must_be_point_in_time": true,
+    "required_runtime_snapshot": [
+      "exchangeInfo",
+      "symbolStatus",
+      "filters",
+      "fee_schedule",
+      "execution_rules",
+      "API_or_SBE_schema_version"
+    ],
+    "must_handle": [
+      "CANCEL_ONLY",
+      "serverShutdown",
+      "partial_fills",
+      "cancel_replace",
+      "OCO",
+      "rate_limits",
+      "minimum_notional",
+      "price_rounding",
+      "quantity_rounding",
+      "UNKNOWN_or_ambiguous_execution_outcome"
+    ]
+  },
+  "data_governance": {
+    "point_in_time_required": true,
+    "survivorship_bias_prohibited": true,
+    "lookahead_bias_prohibited": true,
+    "synthetic_data_must_be_labeled": true,
+    "required_dataset_metadata": [
+      "owner",
+      "source",
+      "license",
+      "version",
+      "dataset_sha256",
+      "lifecycle_sha256",
+      "timezone",
+      "window",
+      "transformations",
+      "quality",
+      "provenance",
+      "retention",
+      "classification"
+    ],
+    "immutable_evidence_required": true
+  },
+  "testing": {
+    "required": [
+      "unit",
+      "integration",
+      "contract",
+      "property_based",
+      "mutation_for_risk_and_execution",
+      "end_to_end",
+      "performance",
+      "load",
+      "chaos",
+      "security",
+      "adversarial_ai",
+      "recovery",
+      "migration",
+      "golden_dataset",
+      "regression"
+    ],
+    "statistical_golden_tests_required": [
+      "DSR",
+      "CSCV_PBO",
+      "Hansen_SPA",
+      "White_Reality_Check"
+    ],
+    "skipped_test_counts_as_pass": false,
+    "runtime_certified": false
+  },
+  "sre_and_dr": {
+    "slo_required": true,
+    "error_budget_required": true,
+    "runbooks_required": true,
+    "on_call_required_for_live": true,
+    "backup_required": true,
+    "PITR_required": true,
+    "restore_test_required": true,
+    "disaster_recovery_test_required": true,
+    "failure_of_critical_telemetry": "DEGRADED_SAFE_MODE",
+    "certified": false
+  },
+  "finops": {
+    "required_dimensions": [
+      "compute",
+      "storage",
+      "network_egress",
+      "database",
+      "observability",
+      "model_tokens",
+      "external_APIs",
+      "artifact_retention"
+    ],
+    "budget_limits_required": true,
+    "per_correct_outcome_cost_required": true,
+    "capacity_plan_required_before_live": true,
+    "certified": false
+  },
+  "production_evidence_bundle_required": {
+    "path_pattern": "artifacts/production-readiness/<run-id>/",
+    "required_files": [
+      "production-readiness-manifest.json",
+      "production-readiness-manifest.sigstore.json",
+      "sbom.spdx.json",
+      "slsa-provenance.intoto.jsonl",
+      "image-digests.json",
+      "policy-bundle-digests.json",
+      "openbao-identity-evidence.json",
+      "opa-fail-closed-evidence.json",
+      "postgresql-migration-evidence.json",
+      "backup-restore-evidence.json",
+      "reconciliation-evidence.json",
+      "kill-switch-e2e-evidence.json",
+      "otel-slo-evidence.json",
+      "chaos-results.json",
+      "security-scan-summary.json",
+      "dependency-and-container-scan-summary.json",
+      "test-summary.json",
+      "approval-record.json"
+    ],
+    "all_digests_must_be_bound_to_exact_code_sha": true,
+    "all_critical_evidence_must_be_signed_or_digest_bound": true
+  },
+  "runtime_proof_gate": {
+    "description": "When infrastructure becomes reachable from an authorized connection, switch from production preparation to production proof.",
+    "required_execution": [
+      "deploy exact signed artifacts to non-production certification environment",
+      "verify workload identity without static OpenBao token",
+      "verify OPA deny-by-default and decision logging",
+      "run PostgreSQL migrations and transactional recovery tests",
+      "exercise durable OrderIntent and duplicate suppression",
+      "force timeout to UNKNOWN and reconcile deterministically",
+      "exercise OCO and cancel/replace on Testnet",
+      "trigger global and strategy kill switches",
+      "run chaos: process crash, network partition, DB restart, policy outage, telemetry outage",
+      "prove backup restore and PITR",
+      "collect SLI/SLO evidence",
+      "verify signatures, SBOM and SLSA provenance before promotion",
+      "persist immutable evidence bundle"
+    ],
+    "automatic_live_promotion": false,
+    "human_approval_required_after_all_gates": true
+  },
+  "current_blockers": [
+    {
+      "id": "P0-DATA-001",
+      "severity": "P0",
+      "state": "BLOCKING",
+      "reason": "Dataset certification unresolved_count=16; FROZEN_DATASET not achieved."
+    },
+    {
+      "id": "P0-SUPPLY-001",
+      "severity": "P0",
+      "state": "BLOCKING",
+      "reason": "Certified AR-TF path still contains floating GitHub Action tags instead of exact commit SHAs."
+    },
+    {
+      "id": "P0-SECRETS-001",
+      "severity": "P0",
+      "state": "BLOCKING",
+      "reason": "Repository OpenBao baseline 2.6.1 is below patched security baseline 2.6.2 and runtime workload identity is not certified."
+    },
+    {
+      "id": "P0-STATS-001",
+      "severity": "P0",
+      "state": "BLOCKING",
+      "reason": "Independent golden/reference tests for DSR/PBO/SPA/White Reality Check are not certified."
+    },
+    {
+      "id": "P0-RUNTIME-001",
+      "severity": "P0",
+      "state": "BLOCKING",
+      "reason": "Production-like runtime evidence bundle has not been executed from an accessible authorized infrastructure connection."
+    }
+  ],
+  "promotion_decision": {
+    "global": "NO_GO",
+    "research": "GO_WITH_GUARDRAILS",
+    "verified_backtest": "NO_GO",
+    "paper": "NO_GO",
+    "testnet": "NO_GO",
+    "shadow": "NO_GO",
+    "live_pilot": "SUSPENDED",
+    "scaled_live": "SUSPENDED"
+  }
+}
