@@ -1,99 +1,357 @@
 name: ar-tf-g4-g13-checkpointed
+
 on:
   pull_request:
-    paths: ['.github/workflows/ar-tf-g4-g13-checkpointed.yml','src/ar_tf/ridge_resume.py','src/ar_tf/classical_tournament.py','tests/test_ar_tf_ridge_resume.py']
+    paths:
+      - '.github/workflows/ar-tf-g4-g13-checkpointed.yml'
+      - 'src/ar_tf/ml_trials.py'
+      - 'src/ar_tf/ridge_fold_resume.py'
+      - 'src/ar_tf/ridge_resume.py'
+      - 'src/ar_tf/ridge_checkpoint_cli.py'
+      - 'tests/test_ar_tf_ridge_fold_resume.py'
+      - 'tests/test_ar_tf_ridge_resume.py'
   workflow_dispatch:
-permissions: {contents: read, actions: read}
+
+permissions:
+  contents: read
+  actions: read
+
 concurrency:
-  group: ar-tf-ridge-single-trial-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ar-tf-ridge-fold-resume-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: false
+
 env:
   PYTHON_VERSION: '3.11'
   CP02_ARTIFACT_ID: '10419024917'
   CP02_ARTIFACT_DIGEST: 'sha256:974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce'
+
 jobs:
   ridge-trials:
     name: ridge-trial-${{ matrix.index }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
-      max-parallel: 9
-      matrix: {index: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26]}
+      max-parallel: 6
+      matrix:
+        index: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: '${{ github.event.pull_request.head.sha || github.sha }}'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with: {python-version: '${{ env.PYTHON_VERSION }}', cache: pip}
+        with:
+          python-version: '${{ env.PYTHON_VERSION }}'
+          cache: pip
       - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
+      - name: Verify exact source SHA
+        env:
+          SOURCE_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - name: Restore immutable CP02
-        env: {GH_TOKEN: '${{ github.token }}'}
+        env:
+          GH_TOKEN: '${{ github.token }}'
         run: |
-          set -euo pipefail; mkdir -p artifacts/g4_g13
+          set -euo pipefail
+          mkdir -p artifacts/g4_g13
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP02_ARTIFACT_ID}" > cp02-meta.json
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP02_ARTIFACT_ID}/zip" > cp02.zip
           python - <<'PY'
           import hashlib,json,os
           from pathlib import Path
-          m=json.loads(Path('cp02-meta.json').read_text()); actual='sha256:'+hashlib.sha256(Path('cp02.zip').read_bytes()).hexdigest()
-          assert str(m['id'])==os.environ['CP02_ARTIFACT_ID'] and m.get('expired') is False and actual==os.environ['CP02_ARTIFACT_DIGEST']==m.get('digest')
+          m=json.loads(Path('cp02-meta.json').read_text())
+          actual='sha256:'+hashlib.sha256(Path('cp02.zip').read_bytes()).hexdigest()
+          assert str(m['id'])==os.environ['CP02_ARTIFACT_ID']
+          assert m.get('expired') is False
+          assert actual==os.environ['CP02_ARTIFACT_DIGEST']==m.get('digest')
           PY
-          unzip -q cp02.zip -d artifacts/g4_g13; (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
-      - name: Execute one preregistered Ridge trial
-        env: {TRIAL_INDEX: '${{ matrix.index }}', SOURCE_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'}
+          unzip -q cp02.zip -d artifacts/g4_g13
+          (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
+      - name: Prepare immutable trial context and local panel cache
+        env:
+          TRIAL_INDEX: '${{ matrix.index }}'
+          SOURCE_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+        run: python -m ar_tf.ridge_checkpoint_cli prepare --index "$TRIAL_INDEX" --github-env "$GITHUB_ENV"
+      - name: Restore committed folds from a prior attempt of this run
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          TRIAL_INDEX: '${{ matrix.index }}'
         run: |
-          python - <<'PY'
-          import hashlib,json,os
-          from pathlib import Path
-          from ar_tf.research_panel import load_research_panel
-          from ar_tf.ridge_resume import execute_trial,write_trial
-          root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; folds=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
-          reg=json.loads(rp.read_text()); panel=load_research_panel(root/'frozen_dataset',folds); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-          r=execute_trial(panel=panel,registry=reg,folds_path=folds,index=int(os.environ['TRIAL_INDEX']))
-          write_trial(r,Path('ridge-trial'),{'parent_checkpoint_sha256':os.environ['CP02_ARTIFACT_DIGEST'].split(':',1)[1],'source_commit_sha':os.environ['SOURCE_SHA'],'dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(folds),'config_sha256':sha(bp)})
-          PY
+          set -euo pipefail
+          mkdir -p restored
+          if gh run download "$GITHUB_RUN_ID" -p "ar-tf-ridge-trial-${TRIAL_INDEX}-fold-*" -D restored; then
+            shopt -s nullglob
+            for d in restored/ar-tf-ridge-trial-${TRIAL_INDEX}-fold-*; do
+              fid="${d##*-fold-}"
+              dest="ridge-checkpoints/${TRIAL_KEY}/fold-${fid}"
+              mkdir -p "$dest"
+              cp "$d/manifest.json" "$d/payload.json" "$dest/"
+            done
+          fi
+      - name: Commit or verify Ridge fold 00
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-00/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 0
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 0
+          fi
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
-        with: {name: 'ar-tf-ridge-trial-${{ matrix.index }}', path: ridge-trial/, if-no-files-found: error, retention-days: 90}
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-00'
+          path: 'ridge-checkpoints/*/fold-00/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 01
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-01/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 1
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 1
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-01'
+          path: 'ridge-checkpoints/*/fold-01/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 02
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-02/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 2
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 2
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-02'
+          path: 'ridge-checkpoints/*/fold-02/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 03
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-03/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 3
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 3
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-03'
+          path: 'ridge-checkpoints/*/fold-03/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 04
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-04/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 4
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 4
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-04'
+          path: 'ridge-checkpoints/*/fold-04/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 05
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-05/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 5
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 5
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-05'
+          path: 'ridge-checkpoints/*/fold-05/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 06
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-06/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 6
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 6
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-06'
+          path: 'ridge-checkpoints/*/fold-06/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 07
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-07/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 7
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 7
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-07'
+          path: 'ridge-checkpoints/*/fold-07/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 08
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-08/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 8
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 8
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-08'
+          path: 'ridge-checkpoints/*/fold-08/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 09
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-09/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 9
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 9
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-09'
+          path: 'ridge-checkpoints/*/fold-09/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 10
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-10/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 10
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 10
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-10'
+          path: 'ridge-checkpoints/*/fold-10/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Commit or verify Ridge fold 11
+        run: |
+          set -euo pipefail
+          if test -f "ridge-checkpoints/${TRIAL_KEY}/fold-11/manifest.json"; then
+            python -m ar_tf.ridge_checkpoint_cli verify-fold --fold 11
+          else
+            python -m ar_tf.ridge_checkpoint_cli commit-fold --fold 11
+          fi
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-trial-${{ matrix.index }}-fold-11'
+          path: 'ridge-checkpoints/*/fold-11/'
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+      - name: Finalize trial from 12 verified committed folds
+        run: python -m ar_tf.ridge_checkpoint_cli finalize
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: 'ar-tf-ridge-result-${{ matrix.index }}'
+          path: ridge-trial/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
   ridge-reducer:
     needs: ridge-trials
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    outputs: {decision: '${{ steps.reduce.outputs.decision }}', gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'}
+    timeout-minutes: 45
+    outputs:
+      decision: '${{ steps.reduce.outputs.decision }}'
+      gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: '${{ github.event.pull_request.head.sha || github.sha }}'
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
-        with: {python-version: '${{ env.PYTHON_VERSION }}', cache: pip}
+        with:
+          python-version: '${{ env.PYTHON_VERSION }}'
+          cache: pip
       - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
-      - name: Restore CP02 and 27 artifacts
-        env: {GH_TOKEN: '${{ github.token }}'}
+      - name: Restore CP02 and exact 27 completed trial artifacts
+        env:
+          GH_TOKEN: '${{ github.token }}'
         run: |
-          set -euo pipefail; mkdir -p artifacts/g4_g13 trials
+          set -euo pipefail
+          mkdir -p artifacts/g4_g13 trials
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP02_ARTIFACT_ID}/zip" > cp02.zip
-          test "sha256:$(sha256sum cp02.zip|cut -d' ' -f1)" = "$CP02_ARTIFACT_DIGEST"; unzip -q cp02.zip -d artifacts/g4_g13; (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
-          gh run download "$GITHUB_RUN_ID" -p 'ar-tf-ridge-trial-*' -D trials
-          test "$(find trials -mindepth 1 -maxdepth 1 -type d|wc -l)" -eq 27
-      - name: Reduce 27/27 and apply frozen adjudication
+          test "sha256:$(sha256sum cp02.zip|cut -d' ' -f1)" = "$CP02_ARTIFACT_DIGEST"
+          unzip -q cp02.zip -d artifacts/g4_g13
+          (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
+          gh run download "$GITHUB_RUN_ID" -p "ar-tf-ridge-result-*" -D trials
+          test "$(find trials -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 27
+      - name: Reduce 27/27, prove 324 fold checkpoints, and apply frozen adjudication
         id: reduce
         run: |
           python - <<'PY'
           import json,os,pandas as pd
           from pathlib import Path
           from ar_tf.research_panel import load_research_panel
-          from ar_tf.ridge_resume import load_trial,reduce_and_adjudicate
+          from ar_tf.ridge_resume import load_trial,reduce_and_adjudicate,runtime_fingerprint_sha256
           from ar_tf.classical_tournament import write_ridge_stage
-          root=Path('artifacts/g4_g13'); folds='config/ar_tf_oos_folds_2026.yaml'; reg=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text()); panel=load_research_panel(root/'frozen_dataset',folds)
-          results=[load_trial(Path('trials')/f'ar-tf-ridge-trial-{i}') for i in range(27)]
+          root=Path('artifacts/g4_g13')
+          folds='config/ar_tf_oos_folds_2026.yaml'
+          reg=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text())
+          panel=load_research_panel(root/'frozen_dataset',folds)
+          results=[load_trial(Path('trials')/f'ar-tf-ridge-result-{i}') for i in range(27)]
+          fingerprints={r['manifest']['runtime_fingerprint_sha256'] for r in results}
+          assert fingerprints=={runtime_fingerprint_sha256()}, fingerprints
           r=reduce_and_adjudicate(panel=panel,registry=reg,folds_path=folds,structural_base=pd.read_csv(root/'structural/structural-oos-base.csv',index_col=0,parse_dates=True),structural_stressed=pd.read_csv(root/'structural/structural-oos-stressed.csv',index_col=0,parse_dates=True),structural_severe=pd.read_csv(root/'structural/structural-oos-severe.csv',index_col=0,parse_dates=True),results=results)
-          assert r['ridge_trial_count']==27 and r['trial_count_total']==149 and not r['holdout_opened'] and not r['holdout_evaluated'] and not r['paper_authorized'] and not r['testnet_authorized'] and not r['live_authorized']
+          assert r['ridge_trial_count']==27 and r['trial_count_total']==149
+          assert not r['holdout_opened'] and not r['holdout_evaluated']
+          assert not r['paper_authorized'] and not r['testnet_authorized'] and not r['live_authorized']
           write_ridge_stage(r,root/'classical/ridge')
-          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('decision='+r['decision']+'\n'+'gbm_admitted='+str(bool(r['gradient_boosting_admitted'])).lower()+'\n')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('decision='+r['decision']+'\n')
+              f.write('gbm_admitted='+str(bool(r['gradient_boosting_admitted'])).lower()+'\n')
           PY
-      - name: Equivalence and adversarial tests
-        run: pytest -q tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
+      - name: Scientific equivalence and adversarial tests
+        run: |
+          pytest -q \
+            tests/test_ar_tf_ridge_fold_resume.py \
+            tests/test_ar_tf_ridge_resume.py \
+            tests/test_ar_tf_g4_g13.py \
+            tests/test_ar_tf_structural_tournament.py \
+            tests/test_ar_tf_trial_registry.py \
+            tests/test_ar_tf_dataset_binding.py
       - name: Seal CP03-FINAL
         run: |
-          cd artifacts/g4_g13; rm -f checkpoint-02.sha256; find . -type f ! -name checkpoint-03-final.sha256 -print0|sort -z|xargs -0 sha256sum > checkpoint-03-final.sha256
+          cd artifacts/g4_g13
+          rm -f checkpoint-02.sha256
+          find . -type f ! -name checkpoint-03-final.sha256 -print0 | sort -z | xargs -0 sha256sum > checkpoint-03-final.sha256
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
-        with: {name: ar-tf-checkpoint-03-final-ridge-27, path: artifacts/g4_g13/, if-no-files-found: error, retention-days: 90}
+        with:
+          name: ar-tf-checkpoint-03-final-ridge-27
+          path: artifacts/g4_g13/
+          if-no-files-found: error
+          retention-days: 90
+
   gbm-gate:
     needs: ridge-reducer
     if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
@@ -101,4 +359,5 @@ jobs:
     steps:
       - run: |
           echo 'Ridge evidence complete; independent GBM executor remains uncertified.'
-          echo 'Fail closed: no GBM, holdout, PAPER, TESTNET, SHADOW, LIVE_PILOT or LIVE authorization.'; exit 1
+          echo 'Fail closed: no GBM, holdout, PAPER, TESTNET, SHADOW, LIVE_PILOT or LIVE authorization.'
+          exit 1

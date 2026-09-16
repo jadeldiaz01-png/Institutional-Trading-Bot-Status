@@ -3,10 +3,13 @@ name: ar-tf-ridge-fold-resume-contract
 on:
   pull_request:
     paths:
+      - 'src/ar_tf/ml_trials.py'
       - 'src/ar_tf/ridge_fold_resume.py'
       - 'src/ar_tf/ridge_resume.py'
+      - 'src/ar_tf/ridge_checkpoint_cli.py'
       - 'src/ar_tf/ridge_reduce.py'
       - 'tests/test_ar_tf_ridge_fold_resume.py'
+      - 'tests/test_ar_tf_ridge_resume.py'
       - '.github/workflows/ar-tf-ridge-fold-resume-contract.yml'
   workflow_dispatch:
 
@@ -19,16 +22,22 @@ env:
 jobs:
   fold-resume-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
-          python-version: '3.12'
+          ref: '${{ github.event.pull_request.head.sha || github.sha }}'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
           cache: pip
       - name: Install project
-        run: python -m pip install -e . pytest
-      - name: Verify fold checkpoint, fail-closed inventory and resume equivalence contract
+        run: python -m pip install -e '.[dev]'
+      - name: Verify exact source SHA
+        env:
+          SOURCE_SHA: '${{ github.event.pull_request.head.sha || github.sha }}'
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Verify real monolith/resume equivalence and fail-closed contracts
         run: |
           pytest -q \
             tests/test_ar_tf_ridge_fold_resume.py \
