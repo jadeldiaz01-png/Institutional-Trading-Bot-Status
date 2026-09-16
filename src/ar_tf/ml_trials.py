@@ -13,7 +13,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
 from .research_panel import ResearchPanel, inverse_vol_weights, rolling_liquidity_universe
-from .ridge_fold_resume import commit_fold_checkpoint, load_committed_fold
+from .ridge_fold_resume import checkpoint_manifest_path, commit_fold_checkpoint, load_committed_fold
 
 
 @dataclass(frozen=True)
@@ -202,7 +202,7 @@ def walk_forward_predictions(
         manifest_path: Path | None = None
 
         if checkpoint_requested:
-            manifest_path=Path(checkpoint_root) / str(checkpoint_trial_id) / f"fold-{fold_index:02d}" / "manifest.json"
+            manifest_path=checkpoint_manifest_path(checkpoint_root, str(checkpoint_trial_id), fold_index)
             if manifest_path.is_file():
                 payload=load_committed_fold(
                     manifest_path,
