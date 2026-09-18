@@ -141,7 +141,11 @@ jobs:
     needs: ridge-trials
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    outputs: {decision: '${{ steps.reduce.outputs.decision }}', gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'}
+    outputs:
+      decision: '${{ steps.reduce.outputs.decision }}'
+      gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'
+      cp03_artifact_id: '${{ steps.cp03.outputs.artifact-id }}'
+      cp03_artifact_digest: '${{ steps.cp03.outputs.artifact-digest }}'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
@@ -255,7 +259,20 @@ jobs:
           PY
       - name: Equivalence, contract, and adversarial tests
         run: pytest -q tests/test_ar_tf_ridge_scientific_equivalence.py tests/test_ar_tf_ridge_fold_resume.py tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
-      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149
+      - name: Build cryptographic evidence chain from verified 324 -> 27 -> 149
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --cp02-digest "$CP02_ARTIFACT_DIGEST" \
+            --github-run-id "$GITHUB_RUN_ID"
+          test -s artifacts/g4_g13/evidence/fold-inventory.json
+          test -s artifacts/g4_g13/evidence/ridge-inventory.json
+          test -s artifacts/g4_g13/evidence/tournament-inventory.json
+          test -s artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+          test -s artifacts/g4_g13/evidence/cp03-slsa-provenance.json
+      - name: Evidence chain contract tests
+        run: pytest -q tests/test_ar_tf_evidence_chain.py tests/test_ar_tf_evidence_gate_provenance.py
+      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149 + evidence binding
         run: |
           cd artifacts/g4_g13
           rm -f checkpoint-02.sha256
@@ -273,8 +290,70 @@ jobs:
       - name: Record CP03 GitHub artifact identity
         run: |
           printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
-  gbm-gate:
+  cp03-signature:
+    name: cp03-keyless-signature
     needs: ridge-reducer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact CP03 artifact bytes and verify GitHub SHA-256
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          ARTIFACT_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+          EXPECTED_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .expired cp03-meta.json)" = false
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Keyless sign exact CP03 GitHub artifact bytes
+        run: cosign sign-blob --yes --bundle cp03.sigstore.json cp03.zip
+      - name: Verify exact workflow identity, GitHub OIDC issuer, and signed CP03 bytes
+        run: |
+          cosign verify-blob cp03.zip \
+            --bundle cp03.sigstore.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed.yml@refs/heads/${GITHUB_REF_NAME}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
+        env:
+          SOURCE_SHA: '${{ env.SOURCE_SHA }}'
+          CP03_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+          CP03_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out={"schema_version":"1.0.0","gate_id":"EVIDENCE_INTEGRITY","passed":True,
+               "source_sha":os.environ["SOURCE_SHA"],"cp03_artifact_id":os.environ["CP03_ID"],
+               "cp03_artifact_digest":os.environ["CP03_DIGEST"],
+               "sigstore_bundle_sha256":hashlib.sha256(Path("cp03.sigstore.json").read_bytes()).hexdigest(),
+               "holdout_opened":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False}
+          Path("evidence-integrity.json").write_text(json.dumps(out,sort_keys=True,indent=2)+"\\n")
+          PY
+      - id: signed
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-sigstore-verification
+          path: |
+            cp03.sigstore.json
+            cp03-meta.json
+            evidence-integrity.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record signed evidence identity
+        run: |
+          printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
+  gbm-gate:
+    needs: [ridge-reducer, cp03-signature]
     if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
     runs-on: ubuntu-latest
     steps:
