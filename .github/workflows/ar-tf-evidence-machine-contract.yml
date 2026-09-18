@@ -5,7 +5,7 @@ on:
       - 'src/ar_tf/evidence_envelope.py'
       - 'src/ar_tf/gate_engine.py'
       - 'src/ar_tf/slsa_provenance.py'
-      - 'tests/test_ar_tf_evidence_gate_provenance.py'
+      - 'tests/test_ar_tf_evidence_gate_provenance.py tests/test_ar_tf_evidence_chain.py'
       - 'docs/AR_TF_SCIENTIFIC_BUILD_TYPE_V1.md'
       - '.github/workflows/ar-tf-evidence-machine-contract.yml'
   workflow_dispatch:
