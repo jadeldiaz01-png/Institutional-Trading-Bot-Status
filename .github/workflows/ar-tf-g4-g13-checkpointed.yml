@@ -61,7 +61,7 @@ jobs:
           t=trial_at(reg,int(os.environ['TRIAL_INDEX']))
           print('TRIAL_ID='+str(t['trial_id']))
           PY
-      - name: Restore and verify durable folds from an earlier attempt of this run
+      - name: Restore and verify durable folds across runs for this exact source lineage
         env:
           GH_TOKEN: '${{ github.token }}'
           TRIAL_INDEX: '${{ matrix.index }}'
@@ -70,26 +70,40 @@ jobs:
           mkdir -p "artifacts/ridge_fold_checkpoints/${TRIAL_ID}"
           for fid in $(seq -w 0 11); do
             name="ar-tf-ridge-fold-$(printf '%02d' "$TRIAL_INDEX")-${fid}"
-            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?name=${name}&per_page=100")"
-            count="$(printf '%s' "$meta" | jq -r '.total_count')"
-            test "$count" -le 1
-            if [ "$count" -eq 0 ]; then
-              continue
-            fi
-            expired="$(printf '%s' "$meta" | jq -r '.artifacts[0].expired')"
-            id="$(printf '%s' "$meta" | jq -r '.artifacts[0].id')"
-            digest="$(printf '%s' "$meta" | jq -r '.artifacts[0].digest')"
-            test "$expired" = "false"
-            test -n "$id"; test "$id" != "null"
-            test "$digest" != "null"; test -n "$digest"
-            zip="/tmp/${name}.zip"
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
-            actual="sha256:$(sha256sum "$zip" | cut -d' ' -f1)"
-            test "$actual" = "$digest"
-            dest="artifacts/ridge_fold_checkpoints/${TRIAL_ID}/fold-${fid}"
-            mkdir -p "$dest"
-            unzip -q "$zip" -d "$dest"
-            test -s "$dest/manifest.json"; test -s "$dest/payload.json"
+            meta="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${name}&per_page=100" --jq '.artifacts[]' || true)"
+            [ -n "$meta" ] || continue
+            restored=false
+            while IFS= read -r row; do
+              [ -n "$row" ] || continue
+              expired="$(printf '%s' "$row" | jq -r '.expired')"
+              id="$(printf '%s' "$row" | jq -r '.id')"
+              digest="$(printf '%s' "$row" | jq -r '.digest')"
+              [ "$expired" = "false" ] || continue
+              [ -n "$id" ] && [ "$id" != "null" ] || continue
+              [ -n "$digest" ] && [ "$digest" != "null" ] || continue
+              zip="/tmp/${name}-${id}.zip"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+              actual="sha256:$(sha256sum "$zip" | cut -d' ' -f1)"
+              [ "$actual" = "$digest" ] || continue
+              tmp="/tmp/${name}-${id}"; rm -rf "$tmp"; mkdir -p "$tmp"; unzip -q "$zip" -d "$tmp"
+              [ -s "$tmp/manifest.json" ] && [ -s "$tmp/payload.json" ] || continue
+              # Fast prefilter. The composite fold step performs the full frozen-lineage
+              # validation (dataset/registry/folds/config/params/seed/holdout/digest).
+              if ! SOURCE_SHA="$SOURCE_SHA" CP02_SHA="${CP02_ARTIFACT_DIGEST#sha256:}" python - "$tmp/manifest.json" <<'PY'
+import json,os,sys
+m=json.load(open(sys.argv[1])); l=m.get("lineage",{})
+assert m.get("state")=="COMMITTED"
+assert l.get("source_commit_sha")==os.environ["SOURCE_SHA"]
+assert l.get("parent_checkpoint_sha256")==os.environ["CP02_SHA"]
+assert not l.get("holdout_opened") and not l.get("holdout_evaluated")
+PY
+              then continue; fi
+              dest="artifacts/ridge_fold_checkpoints/${TRIAL_ID}/fold-${fid}"
+              rm -rf "$dest"; mkdir -p "$dest"; cp "$tmp/manifest.json" "$tmp/payload.json" "$dest/"
+              restored=true
+              break
+            done <<< "$meta"
+            $restored || true
           done
       - name: Ridge fold 00
         uses: ./.github/actions/ar-tf-ridge-fold
