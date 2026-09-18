@@ -320,7 +320,7 @@ jobs:
         run: |
           cosign verify-blob cp03.zip \
             --bundle cp03.sigstore.json \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed.yml@refs/heads/${GITHUB_REF_NAME}" \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed\\.yml@refs/(heads|pull)/.+$" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
       - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
         env:
