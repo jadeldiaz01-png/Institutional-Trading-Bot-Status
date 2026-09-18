@@ -1,0 +1,97 @@
+name: ar-tf-cp03-signed-evidence
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Completed checkpointed Ridge workflow run containing real CP03'
+        required: true
+        type: string
+      expected_source_sha:
+        description: 'Exact source SHA certified by the source run'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify-and-sign-cp03:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with: {python-version: '3.11'}
+      - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
+      - name: Download exact CP03 from source run and verify GitHub digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?name=ar-tf-checkpoint-03-final-ridge-27&per_page=100")"
+          test "$(printf '%s' "$meta"|jq -r '.total_count')" = "1"
+          id="$(printf '%s' "$meta"|jq -r '.artifacts[0].id')"
+          digest="$(printf '%s' "$meta"|jq -r '.artifacts[0].digest')"
+          expired="$(printf '%s' "$meta"|jq -r '.artifacts[0].expired')"
+          test "$expired" = false; test -n "$digest"; test "$digest" != null
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip|cut -d' ' -f1)" = "$digest"
+          mkdir -p artifacts/g4_g13
+          unzip -q cp03.zip -d artifacts/g4_g13
+          (cd artifacts/g4_g13 && sha256sum -c checkpoint-03-final.sha256)
+          # The CP03 archive must carry the externally verified fold/trial artifacts
+          # or the evidence builder must fail closed rather than synthesize them.
+          test -d fold-artifacts
+          test -d trials
+          printf 'CP03_GITHUB_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
+      - name: Require exact scientific invariants
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('artifacts/g4_g13/classical/ridge/ridge-stage.json').read_text())
+          assert r['ridge_trial_count']==27 and r['trial_count_total']==149
+          assert not r['ridge_failures']
+          for k in ('holdout_opened','holdout_evaluated','paper_authorized','testnet_authorized','live_authorized'):
+              assert not r[k], k
+          PY
+      - name: Build CP03 EvidenceEnvelope, inventories, Merkle roots and SLSA statement
+        env:
+          CP02_DIGEST: sha256:974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py             --source-sha "${{ inputs.expected_source_sha }}"             --cp02-digest "$CP02_DIGEST"             --github-run-id "${{ inputs.source_run_id }}"
+          sha256sum artifacts/g4_g13/evidence/cp03-evidence-envelope.json > artifacts/g4_g13/evidence/cp03-evidence-envelope.sha256
+          sha256sum artifacts/g4_g13/evidence/cp03-slsa-provenance.json > artifacts/g4_g13/evidence/cp03-slsa-provenance.sha256
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.10.0
+      - name: Keyless sign exact CP03 EvidenceEnvelope
+        run: |
+          cosign sign-blob --yes             --bundle artifacts/g4_g13/evidence/cp03.sigstore.json             artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+      - name: Verify exact signing workflow identity and GitHub OIDC issuer
+        run: |
+          cosign verify-blob             artifacts/g4_g13/evidence/cp03-evidence-envelope.json             --bundle artifacts/g4_g13/evidence/cp03.sigstore.json             --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-cp03-signed-evidence.yml@refs/heads/${GITHUB_REF_NAME}"             --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit verified EVIDENCE_INTEGRITY certificate
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          p=Path('artifacts/g4_g13/evidence/cp03-evidence-envelope.json')
+          b=Path('artifacts/g4_g13/evidence/cp03.sigstore.json')
+          out={'schema_version':'1.0.0','gate_id':'EVIDENCE_INTEGRITY','passed':True,
+               'cp03_evidence_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
+               'sigstore_bundle_sha256':hashlib.sha256(b.read_bytes()).hexdigest(),
+               'source_run_id':'${{ inputs.source_run_id }}','source_sha':'${{ inputs.expected_source_sha }}',
+               'github_artifact_digest':os.environ['CP03_GITHUB_DIGEST'],
+               'holdout_opened':False,'paper_authorized':False,'testnet_authorized':False,'live_authorized':False}
+          Path('artifacts/g4_g13/evidence/evidence-integrity.json').write_text(json.dumps(out,sort_keys=True,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-signed-evidence
+          path: artifacts/g4_g13/evidence/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
