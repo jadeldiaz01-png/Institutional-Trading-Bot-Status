@@ -42,6 +42,10 @@ jobs:
           mkdir -p artifacts/g4_g13
           unzip -q cp03.zip -d artifacts/g4_g13
           (cd artifacts/g4_g13 && sha256sum -c checkpoint-03-final.sha256)
+          # The CP03 archive must carry the externally verified fold/trial artifacts
+          # or the evidence builder must fail closed rather than synthesize them.
+          test -d fold-artifacts
+          test -d trials
           printf 'CP03_GITHUB_DIGEST=%s\n' "$digest" >> "$GITHUB_ENV"
       - name: Require exact scientific invariants
         run: |
