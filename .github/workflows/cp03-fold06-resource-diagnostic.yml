@@ -1,0 +1,169 @@
+name: CP03 fold-06 resource diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: cp03-fold06-resource-diagnostic
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: '3.11'
+  SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'
+  SOURCE_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'
+  CP02_ARTIFACT_ID: '10419024917'
+  CP02_ARTIFACT_DIGEST: 'sha256:974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce'
+  SOURCE_RUN_ID: '35557179691'
+  TRIAL_INDEX: '0'
+  FOLD_ID: '6'
+
+jobs:
+  diagnose-fold-06:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SCIENTIFIC_SHA }}
+
+      - name: Verify frozen scientific checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SCIENTIFIC_SHA"
+          test "$SOURCE_SHA" = "$SCIENTIFIC_SHA"
+          test -f pyproject.toml
+          test -d src/ar_tf
+          test -f scripts/ar_tf_ridge_fold_step.py
+          git diff --exit-code
+          git diff --cached --exit-code
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '${{ env.PYTHON_VERSION }}'
+          cache: pip
+
+      - name: Install frozen runtime dependencies
+        run: python -m pip install --upgrade pip && pip install -e '.[dev]'
+
+      - name: Restore immutable CP02
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/g4_g13
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP02_ARTIFACT_ID}" > cp02-meta.json
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP02_ARTIFACT_ID}/zip" > cp02.zip
+          python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          meta=json.loads(Path("cp02-meta.json").read_text())
+          actual="sha256:"+hashlib.sha256(Path("cp02.zip").read_bytes()).hexdigest()
+          assert str(meta["id"]) == os.environ["CP02_ARTIFACT_ID"]
+          assert meta.get("expired") is False
+          assert actual == os.environ["CP02_ARTIFACT_DIGEST"] == meta.get("digest")
+          PY
+          unzip -q cp02.zip -d artifacts/g4_g13
+          (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
+
+      - name: Resolve frozen Ridge trial identity
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json, os
+          from pathlib import Path
+          from ar_tf.ridge_resume import trial_at
+          reg=json.loads(Path("artifacts/g4_g13/preregistration/preregistered-trial-registry.json").read_text())
+          trial=trial_at(reg,int(os.environ["TRIAL_INDEX"]))
+          print("TRIAL_ID="+str(trial["trial_id"]))
+          PY
+
+      - name: Restore and verify folds 00-05 from cancelled run
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          set -euo pipefail
+          mkdir -p "artifacts/ridge_fold_checkpoints/${TRIAL_ID}"
+          for fid in 00 01 02 03 04 05; do
+            name="ar-tf-ridge-fold-00-${fid}"
+            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?name=${name}&per_page=100")"
+            count="$(printf '%s' "$meta" | jq -r '.total_count')"
+            test "$count" -eq 1
+            expired="$(printf '%s' "$meta" | jq -r '.artifacts[0].expired')"
+            id="$(printf '%s' "$meta" | jq -r '.artifacts[0].id')"
+            digest="$(printf '%s' "$meta" | jq -r '.artifacts[0].digest')"
+            test "$expired" = "false"
+            test -n "$id"; test "$id" != "null"
+            test -n "$digest"; test "$digest" != "null"
+            zip="/tmp/${name}.zip"
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            actual="sha256:$(sha256sum "$zip" | cut -d' ' -f1)"
+            test "$actual" = "$digest"
+            dest="artifacts/ridge_fold_checkpoints/${TRIAL_ID}/fold-${fid}"
+            mkdir -p "$dest"
+            unzip -q "$zip" -d "$dest"
+            test -s "$dest/manifest.json"
+            test -s "$dest/payload.json"
+          done
+
+      - name: Validate restored fold lineage without recomputation
+        run: |
+          set -euo pipefail
+          for fid in 0 1 2 3 4 5; do
+            FOLD_ID="$fid" python scripts/ar_tf_ridge_fold_step.py
+          done
+
+      - name: Capture static runner capacity
+        run: |
+          set -euo pipefail
+          echo "=== uname ==="; uname -a
+          echo "=== cpu ==="; nproc; lscpu
+          echo "=== memory ==="; cat /proc/meminfo
+          echo "=== load ==="; cat /proc/loadavg
+          echo "=== disk ==="; df -hT .
+          echo "=== inodes ==="; df -i .
+          echo "=== limits ==="; ulimit -a
+
+      - name: Execute fold 06 with live resource telemetry
+        id: fold06
+        shell: bash
+        run: |
+          set -uo pipefail
+          echo "RESOURCE_DIAGNOSTIC_ONLY=true"
+          echo "SCIENTIFIC_SHA=$SCIENTIFIC_SHA"
+          echo "SOURCE_RUN_ID=$SOURCE_RUN_ID"
+          echo "TRIAL_INDEX=$TRIAL_INDEX FOLD_ID=$FOLD_ID"
+          (
+            while true; do
+              echo "=== RESOURCE_SAMPLE $(date -u +%Y-%m-%dT%H:%M:%S.%3NZ) ==="
+              grep -E '^(MemTotal|MemFree|MemAvailable|Buffers|Cached|SwapTotal|SwapFree):' /proc/meminfo || true
+              printf 'loadavg='; cat /proc/loadavg || true
+              df -Pk . || true
+              df -Pi . || true
+              ps -eo pid,ppid,%cpu,%mem,rss,vsz,etime,stat,comm --sort=-rss | head -n 12 || true
+              sleep 2
+            done
+          ) &
+          sampler_pid=$!
+          start_ns="$(date +%s%N)"
+          set +e
+          /usr/bin/time -v python scripts/ar_tf_ridge_fold_step.py
+          rc=$?
+          set -e
+          end_ns="$(date +%s%N)"
+          kill "$sampler_pid" 2>/dev/null || true
+          wait "$sampler_pid" 2>/dev/null || true
+          elapsed_ms=$(( (end_ns-start_ns)/1000000 ))
+          echo "FOLD06_EXIT_CODE=$rc"
+          echo "FOLD06_ELAPSED_MS=$elapsed_ms"
+          exit "$rc"
+
+      - name: Assert diagnostic cannot certify CP03
+        if: always()
+        run: |
+          set -euo pipefail
+          test ! -e artifacts/g4_g13/checkpoint-03-final.json
+          echo "RESOURCE_DIAGNOSTIC_ONLY=true"
+          echo "This workflow does not run the CP03 reducer, signing, holdout, PAPER, TESTNET, or LIVE gates."
