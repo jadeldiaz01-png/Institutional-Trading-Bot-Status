@@ -37,4 +37,5 @@ jobs:
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
       - name: Assert CI never runs scientific fold
         run: |
-          ! grep -q 'ar_tf_ridge_fold_step.py' .github/workflows/diagnostic-control-plane-ci.yml
+          set -euo pipefail
+          ! grep -E '^[[:space:]]*python[[:space:]].*ar_tf_ridge_fold_step\.py([[:space:]]|$)' .github/workflows/diagnostic-control-plane-ci.yml
