@@ -22,7 +22,8 @@ env:
   PYTHON_VERSION: '3.11'
   CP02_ARTIFACT_ID: '10419024917'
   CP02_ARTIFACT_DIGEST: 'sha256:974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce'
-  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+  SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'
+  SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && '8da2171e97970c66b3ba5a237c426d9871cc23a1' || github.event.pull_request.head.sha }}
 jobs:
   ridge-trials:
     name: ridge-trial-${{ matrix.index }}
@@ -34,6 +35,16 @@ jobs:
       matrix: {index: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26]}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && env.SCIENTIFIC_SHA || github.ref }}
+      - name: Verify exact scientific checkout
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SCIENTIFIC_SHA"
+          test "$SOURCE_SHA" = "$SCIENTIFIC_SHA"
+          test -f pyproject.toml
+          test -d src/ar_tf
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with: {python-version: '${{ env.PYTHON_VERSION }}', cache: pip}
       - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
@@ -148,6 +159,16 @@ jobs:
       cp03_artifact_digest: '${{ steps.cp03.outputs.artifact-digest }}'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && env.SCIENTIFIC_SHA || github.ref }}
+      - name: Verify exact scientific checkout
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SCIENTIFIC_SHA"
+          test "$SOURCE_SHA" = "$SCIENTIFIC_SHA"
+          test -f pyproject.toml
+          test -d src/ar_tf
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with: {python-version: '${{ env.PYTHON_VERSION }}', cache: pip}
       - run: python -m pip install --upgrade pip && pip install -e '.[dev]'
