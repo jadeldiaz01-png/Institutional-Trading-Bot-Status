@@ -1,0 +1,40 @@
+name: Diagnostic control-plane CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cp03-fold06-low-perturbation-memory.yml'
+      - '.github/workflows/diagnostic-control-plane-ci.yml'
+      - 'scripts/diagnostics/proc_memory_supervisor.py'
+      - 'scripts/diagnostics/preflight_cp03_fold06_memory.py'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Compile diagnostic Python
+        run: |
+          python -m py_compile scripts/diagnostics/proc_memory_supervisor.py
+          python -m py_compile scripts/diagnostics/preflight_cp03_fold06_memory.py
+      - name: Enforce diagnostic-only invariants
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/cp03-fold06-low-perturbation-memory.yml
+          grep -q "SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'" "$wf"
+          grep -q "LOW_PERTURBATION_DIAGNOSTIC_ONLY=true" "$wf"
+          grep -q "test ! -e artifacts/g4_g13/checkpoint-03-final.json" "$wf"
+          ! grep -R -E 'sys\.settrace|tracemalloc' scripts/diagnostics/proc_memory_supervisor.py scripts/diagnostics/preflight_cp03_fold06_memory.py
+          grep -q '/proc/' scripts/diagnostics/proc_memory_supervisor.py
+          grep -q 'smaps_rollup' scripts/diagnostics/proc_memory_supervisor.py
+          grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
+      - name: Assert CI never runs scientific fold
+        run: |
+          ! grep -q 'ar_tf_ridge_fold_step.py' .github/workflows/diagnostic-control-plane-ci.yml
