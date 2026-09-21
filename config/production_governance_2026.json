@@ -1,0 +1,73 @@
+{
+  "schema_version": "2.0.0",
+  "manifest_type": "PRODUCTION_GOVERNANCE_CONTROL_PLANE_2026",
+  "default_decision": "DENY",
+  "current_stage": "RESEARCH",
+  "holdout": {"state":"CLOSED","open_requires_signed_adjudicator_artifact":true},
+  "capital": {"autonomous_capital_usd":0,"live_trading_enabled":false,"ai_may_authorize_live":false},
+  "evidence": {
+    "code_is_evidence": false,
+    "workflow_success_is_evidence": false,
+    "required_binding": ["repository_id","commit_sha","workflow_ref","run_id","artifact_id","artifact_sha256","dataset_sha256","config_sha256","policy_digest","timestamp"],
+    "required_integrity": ["sha256","artifact_attestation","provenance","immutable_storage"],
+    "promotion_requires_verified_evidence": true
+  },
+  "ridge_cp03": {
+    "expected_trials":27,"expected_folds_per_trial":12,"expected_checkpoints":324,
+    "required_counts":{"missing":0,"duplicate":0,"corrupt":0,"lineage_mismatch":0},
+    "required_reduction":{"ridge_trials":27,"total_trials":149},
+    "cp03_final_required":true,
+    "no_scientific_variable_changes":true
+  },
+  "planes": {
+    "control":["identity","policy","approvals","command_bus","kill_switch","budget_enforcer"],
+    "data":["dataset_registry","point_in_time_feature_store","lineage_catalog","knowledge_graph","evidence_ledger"],
+    "research":["classical_quant","ml","deep_learning","llm","multimodal","offline_evaluation"],
+    "execution":["order_intent","risk_engine","oms","ems","exchange_adapter","reconciliation"],
+    "agentic":["agent_registry","capability_registry","tool_gateway","sandbox","memory","model_router"],
+    "observability":["otel_traces","otel_metrics","otel_logs","slo_engine","audit_events"],
+    "supply_chain":["sbom","slsa_provenance","sigstore_attestation","digest_pinning","dependency_scanning"]
+  },
+  "model_admission": {
+    "classical":{"allowed_stage":"RESEARCH","live_authority":false},
+    "ml":{"allowed_stage":"OFFLINE_SHADOW","requires":["frozen_dataset","preregistered_protocol","leakage_tests","calibration","drift_tests","cost_aware_utility"],"live_authority":false},
+    "deep_learning":{"allowed_stage":"OFFLINE_SHADOW","requires":["ml_requirements","ablation","seed_stability","capacity_justification"],"live_authority":false},
+    "llm":{"allowed_stage":"ASSISTIVE","requires":["prompt_injection_eval","tool_allowlist","structured_outputs","human_approval_for_critical_actions"],"live_authority":false},
+    "multimodal":{"allowed_stage":"ASSISTIVE","requires":["source_provenance","modality_quality_checks","adversarial_input_eval"],"live_authority":false},
+    "rl":{"allowed_stage":"SIMULATION_ONLY","requires":["simulator_validation","off_policy_evaluation","constraint_safety"],"live_authority":false}
+  },
+  "agent_policy": {
+    "critical_actions_probabilistic_only":false,
+    "default_tool_access":"NONE",
+    "least_privilege":true,
+    "egress_allowlist":true,
+    "schema_validation":true,
+    "idempotency_required":true,
+    "human_approval":["holdout_open","paper_promotion","testnet_promotion","live_pilot","capital_change","secret_policy_change"],
+    "forbidden":["bypass_captcha","bypass_kyc","multi_account_abuse","secret_exfiltration","unapproved_real_orders"]
+  },
+  "sre": {
+    "required_slos":["control_plane_availability","policy_decision_latency","reconciliation_freshness","evidence_write_success","checkpoint_recovery"],
+    "required_dr":["backup","restore_test","pitr","runner_interruption_resume","dependency_outage","policy_outage","telemetry_outage"],
+    "fail_closed":["risk_engine","policy_engine","identity","reconciliation"]
+  },
+  "finops": {
+    "budgets_required":true,
+    "dimensions":["compute","storage","egress","database","observability","model_tokens","external_apis","artifacts"],
+    "unit_economics":["cost_per_verified_experiment","cost_per_checkpoint","cost_per_correct_agent_outcome"],
+    "automatic_budget_overrun_action":"STOP_NONCRITICAL_WORK"
+  },
+  "non_trading_revenue_agents": {
+    "stage":"SANDBOX",
+    "allowed":["research","drafting","analytics","lead_scoring_with_compliance","content_planning","report_generation"],
+    "requires_human_approval":["publication","external_message","contractual_commitment","payment","account_change"],
+    "financial_trading_authority":"NONE"
+  },
+  "promotion_gates": {
+    "verified_backtest":["frozen_dataset","scientific_integrity","signed_evidence"],
+    "paper":["verified_backtest","untouched_holdout_adjudication","human_approval"],
+    "testnet":["paper_forward_evidence","reconciliation_e2e","kill_switch_e2e","human_approval"],
+    "live_pilot":["testnet_evidence","slo_pass","dr_restore_pass","supply_chain_verified","security_pass","human_approval"],
+    "scaled_live":["live_pilot_evidence","risk_committee_approval","capacity_pass"]
+  }
+}
