@@ -1,0 +1,94 @@
+name: CP03 control-plane CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ar-tf-g4-g13-checkpointed.yml'
+      - '.github/workflows/cp03-control-plane-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      NEW_SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'
+      OLD_SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.11'
+      - name: Enforce exact scientific pin and dispatch-only execution
+        run: |
+          set -euo pipefail
+          cp03=.github/workflows/ar-tf-g4-g13-checkpointed.yml
+          grep -Fq "SCIENTIFIC_SHA: '${NEW_SCIENTIFIC_SHA}'" "${cp03}"
+          grep -Fq "'68ab70b0a531b86b1a02db0e404aa69a5a088b95' || github.event.pull_request.head.sha" "${cp03}"
+          ! grep -Fq "${OLD_SCIENTIFIC_SHA}" "${cp03}"
+          test "$(grep -Fc "github.event_name == 'workflow_dispatch'" "${cp03}")" -ge 6
+          grep -Fq "'source_commit_sha':os.environ['SOURCE_SHA']" "${cp03}"
+          grep -Fq "import hashlib,json,os" "${cp03}"
+      - name: Verify referenced scientific commit and alignment fix
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "${NEW_SCIENTIFIC_SHA}"
+          git cat-file -e "${NEW_SCIENTIFIC_SHA}^{commit}"
+          git show "${NEW_SCIENTIFIC_SHA}:src/ar_tf/ml_trials.py" > /tmp/ml_trials.py
+          git show "${NEW_SCIENTIFIC_SHA}:src/ar_tf/ridge_fold_resume.py" > /tmp/ridge_fold_resume.py
+          git show "${NEW_SCIENTIFIC_SHA}:scripts/ar_tf_ridge_fold_step.py" > /tmp/ar_tf_ridge_fold_step.py
+          grep -Fq 'y.index=y.index.set_names(["timestamp","market_id"])' /tmp/ml_trials.py
+          grep -Fq 'joined=x.join(y,how="inner",validate="one_to_one")' /tmp/ml_trials.py
+          grep -Fq 'if lineage != dict(expected_lineage):' /tmp/ridge_fold_resume.py
+          grep -Fq 'raise ValueError("checkpoint lineage mismatch")' /tmp/ridge_fold_resume.py
+          grep -Fq '"source_commit_sha": os.environ["SOURCE_SHA"]' /tmp/ar_tf_ridge_fold_step.py
+      - name: Prove old scientific lineage fails closed
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import os
+          import tempfile
+
+          spec=importlib.util.spec_from_file_location("ridge_fold_resume","/tmp/ridge_fold_resume.py")
+          module=importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+
+          old_sha=os.environ["OLD_SCIENTIFIC_SHA"]
+          new_sha=os.environ["NEW_SCIENTIFIC_SHA"]
+          old_lineage={
+              "source_commit_sha":old_sha,
+              "holdout_opened":False,
+              "holdout_evaluated":False,
+          }
+          expected={
+              "source_commit_sha":new_sha,
+              "holdout_opened":False,
+              "holdout_evaluated":False,
+          }
+          with tempfile.TemporaryDirectory() as root:
+              manifest=module.commit_fold_checkpoint(
+                  root,
+                  trial_id="ridge-control-plane-ci",
+                  fold_id=0,
+                  lineage=old_lineage,
+                  payload={"schema_version":"1.0.0","training_rows":1},
+              )
+              try:
+                  module.load_committed_fold(
+                      manifest,
+                      expected_trial_id="ridge-control-plane-ci",
+                      expected_fold_id=0,
+                      expected_lineage=expected,
+                  )
+              except ValueError as exc:
+                  assert str(exc)=="checkpoint lineage mismatch"
+              else:
+                  raise AssertionError("old scientific lineage was incorrectly accepted")
+          print("OLD_LINEAGE_REJECTED=true")
+          PY
+      - name: Assert CI cannot execute CP03 folds
+        run: |
+          set -euo pipefail
+          ! grep -E '^[[:space:]]*python[[:space:]].*ar_tf_ridge_fold_step\.py([[:space:]]|$)' .github/workflows/cp03-control-plane-ci.yml
