@@ -119,3 +119,42 @@ def test_corrupt_committed_fold_fails_closed(tmp_path):
     payload=root/"ridge-test"/"fold-06"/"payload.json"; obj=json.loads(payload.read_text()); obj["training_rows"]+=1; payload.write_text(json.dumps(obj)+"\n")
     with pytest.raises(ValueError,match="digest"):
         walk_forward_predictions(panel,folds,family="ridge",params=params,seed=7,max_training_rows_per_fold=80,checkpoint_root=root,checkpoint_trial_id="ridge-test",checkpoint_lineage=_lineage())
+
+
+def test_long_training_frame_aligns_target_by_timestamp_and_market_id():
+    idx=pd.date_range("2025-01-01",periods=2,tz="UTC",freq="D",name="timestamp")
+    feature=pd.DataFrame([[1.0,2.0],[3.0,4.0]],index=idx,columns=["A","B"])
+    target=pd.DataFrame([[10.0,20.0],[30.0,40.0]],index=idx,columns=["A","B"])
+    assert feature.columns.name is None
+    assert target.columns.name is None
+
+    train=_long_training_frame({"signal":feature},target,idx)
+
+    assert train.index.names==["timestamp","market_id"]
+    assert train.index.is_unique
+    assert len(train)==4
+    assert train.loc[(idx[0],"A"),"target"]==10.0
+    assert train.loc[(idx[0],"B"),"target"]==20.0
+    assert train.loc[(idx[1],"A"),"target"]==30.0
+    assert train.loc[(idx[1],"B"),"target"]==40.0
+
+
+def test_long_training_frame_cardinality_is_exact_key_intersection():
+    idx=pd.date_range("2025-02-01",periods=2,tz="UTC",freq="D",name="timestamp")
+    feature=pd.DataFrame([[1.0,2.0],[3.0,4.0]],index=idx,columns=["A","B"])
+    target=pd.DataFrame([[10.0,20.0],[30.0,np.nan]],index=idx,columns=["A","B"])
+
+    train=_long_training_frame({"signal":feature},target,idx)
+
+    assert len(train)==3
+    assert (idx[1],"B") not in train.index
+    assert set(train.index)=={(idx[0],"A"),(idx[0],"B"),(idx[1],"A")}
+
+
+def test_long_training_frame_rejects_duplicate_target_keys():
+    idx=pd.date_range("2025-03-01",periods=2,tz="UTC",freq="D",name="timestamp")
+    feature=pd.DataFrame([[1.0],[2.0]],index=idx,columns=["A"])
+    target=pd.DataFrame([[10.0,11.0],[20.0,21.0]],index=idx,columns=["A","A"])
+
+    with pytest.raises(ValueError,match="target training index must be unique"):
+        _long_training_frame({"signal":feature},target,idx)
