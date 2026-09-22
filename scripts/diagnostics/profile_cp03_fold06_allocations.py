@@ -1,57 +1,85 @@
 from __future__ import annotations
+
 import os, runpy, sys, time
 from pathlib import Path
+import pandas as pd
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
 
-TARGET = Path("src/ar_tf/ml_trials.py").resolve()
-WATCH = {131,132,137,154,163,171,172,173,174,187,188,189,190,191,192,193,195,197,207,208,209,211,212,213,223,224,231,238,240,241,242,243,247}
-
-def rss_kb() -> int:
+def rss_kb():
     for line in Path("/proc/self/status").read_text().splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1])
+        if line.startswith("VmRSS:"): return int(line.split()[1])
     return -1
 
-def available_kb() -> int:
+def available_kb():
     for line in Path("/proc/meminfo").read_text().splitlines():
-        if line.startswith("MemAvailable:"):
-            return int(line.split()[1])
+        if line.startswith("MemAvailable:"): return int(line.split()[1])
     return -1
 
-def describe(name, obj):
-    try:
-        shape=getattr(obj,"shape",None); dtype=getattr(obj,"dtype",None)
-        nbytes=getattr(obj,"nbytes",None)
-        if nbytes is None and hasattr(obj,"memory_usage"):
-            mu=obj.memory_usage(deep=True)
-            nbytes=int(mu.sum() if hasattr(mu,"sum") else mu)
-        return f"{name}:type={type(obj).__name__},shape={shape},dtype={dtype},bytes={nbytes}"
-    except Exception as exc:
-        return f"{name}:describe_error={type(exc).__name__}"
+def describe(obj):
+    shape=getattr(obj,"shape",None); dtype=getattr(obj,"dtype",None); nbytes=getattr(obj,"nbytes",None)
+    if nbytes is None and hasattr(obj,"memory_usage"):
+        try:
+            mu=obj.memory_usage(deep=True); nbytes=int(mu.sum() if hasattr(mu,"sum") else mu)
+        except Exception: nbytes=None
+    return f"type={type(obj).__name__},shape={shape},dtype={dtype},bytes={nbytes}"
 
-last = {}
-def tracer(frame, event, arg):
-    if event != "line" or Path(frame.f_code.co_filename).resolve() != TARGET:
-        return tracer
-    line=frame.f_lineno
-    if line not in WATCH:
-        return tracer
-    now=time.monotonic_ns()
-    rss=rss_kb(); avail=available_kb()
-    prev=last.get("rss",rss)
-    print(f"ALLOC_TRACE line={line} rss_kb={rss} delta_rss_kb={rss-prev} mem_available_kb={avail} t_ns={now}", flush=True)
-    last["rss"]=rss
-    loc=frame.f_locals
-    for name in ("features","target","train_dates","test_dates","train","test","take","X","y","Xtest","scaler","Xs","Xts","model","pred","train_pred","forecasts","uncertainties","payload"):
-        if name in loc:
-            print("ALLOC_OBJECT "+describe(name,loc[name]), flush=True)
-    return tracer
+def mark(stage,obj=None,started_ns=None):
+    elapsed=None if started_ns is None else (time.monotonic_ns()-started_ns)/1_000_000
+    suffix="" if obj is None else " "+describe(obj)
+    print(f"ALLOC_BOUNDARY stage={stage} rss_kb={rss_kb()} mem_available_kb={available_kb()} elapsed_ms={elapsed}{suffix}",flush=True)
 
-if __name__ == "__main__":
+def wrap_method(cls,name,label):
+    original=getattr(cls,name)
+    def wrapped(self,*args,**kwargs):
+        mark(label+".before",self)
+        for i,arg in enumerate(args[:2]): mark(f"{label}.arg{i}",arg)
+        started=time.monotonic_ns()
+        result=original(self,*args,**kwargs)
+        mark(label+".after",result,started)
+        return result
+    setattr(cls,name,wrapped)
+
+def main():
     science=Path(os.environ["SCIENCE_ROOT"]).resolve()
-    os.chdir(science)
-    sys.path.insert(0,str(science/"src"))
-    sys.settrace(tracer)
-    try:
-        runpy.run_path(str(science/"scripts/ar_tf_ridge_fold_step.py"),run_name="__main__")
-    finally:
-        sys.settrace(None)
+    os.chdir(science); sys.path.insert(0,str(science/"src"))
+    import ar_tf.ml_trials as ml
+
+    original_feature_panels=ml._feature_panels
+    original_future_return=ml._future_return
+    original_long_features=ml._long_features
+    original_long_training=ml._long_training_frame
+
+    def feature_panels(panel):
+        mark("feature_panels.before"); started=time.monotonic_ns()
+        out=original_feature_panels(panel)
+        mark("feature_panels.after",next(iter(out.values())),started)
+        print("ALLOC_FEATURES "+" ".join(f"{k}={describe(v)}" for k,v in out.items()),flush=True)
+        return out
+
+    def future_return(panel,horizon):
+        mark("future_return.before"); started=time.monotonic_ns()
+        out=original_future_return(panel,horizon); mark("future_return.after",out,started); return out
+
+    def long_features(features,dates):
+        print(f"ALLOC_DATES kind=features count={len(dates)}",flush=True)
+        mark("long_features.before"); started=time.monotonic_ns()
+        out=original_long_features(features,dates); mark("long_features.after",out,started); return out
+
+    def long_training(features,target,dates):
+        print(f"ALLOC_DATES kind=training count={len(dates)}",flush=True)
+        mark("long_training.before"); started=time.monotonic_ns()
+        out=original_long_training(features,target,dates); mark("long_training.after",out,started); return out
+
+    ml._feature_panels=feature_panels; ml._future_return=future_return
+    ml._long_features=long_features; ml._long_training_frame=long_training
+    wrap_method(pd.DataFrame,"to_numpy","DataFrame.to_numpy")
+    wrap_method(StandardScaler,"fit","StandardScaler.fit")
+    wrap_method(StandardScaler,"transform","StandardScaler.transform")
+    wrap_method(Ridge,"fit","Ridge.fit")
+    wrap_method(Ridge,"predict","Ridge.predict")
+
+    mark("driver.start")
+    runpy.run_path(str(science/"scripts/ar_tf_ridge_fold_step.py"),run_name="__main__")
+
+if __name__=="__main__": main()
