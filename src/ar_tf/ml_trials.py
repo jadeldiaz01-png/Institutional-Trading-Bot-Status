@@ -60,8 +60,25 @@ def _long_features(features: dict[str, pd.DataFrame], dates: pd.DatetimeIndex) -
 
 def _long_training_frame(features: dict[str, pd.DataFrame], target: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
     x=_long_features(features,dates)
+    if not target.index.is_unique:
+        raise ValueError("target timestamps must be unique")
+    if not target.columns.is_unique:
+        raise ValueError("target market columns must be unique")
     y=target.reindex(dates).stack().rename("target")
-    return x.join(y,how="inner").replace([np.inf,-np.inf],np.nan).dropna()
+    y.index=y.index.set_names(["timestamp","market_id"])
+    if not x.index.is_unique:
+        raise ValueError("feature training index must be unique")
+    if not y.index.is_unique:
+        raise ValueError("target training index must be unique")
+    expected_rows=len(x.index.intersection(y.index,sort=False))
+    joined=x.join(y,how="inner",validate="one_to_one")
+    if not joined.index.is_unique:
+        raise RuntimeError("training alignment produced duplicate keys")
+    if len(joined)!=expected_rows:
+        raise RuntimeError(
+            f"training alignment cardinality violation: expected={expected_rows} actual={len(joined)}"
+        )
+    return joined.replace([np.inf,-np.inf],np.nan).dropna()
 
 
 def _future_return(panel: ResearchPanel, horizon: int) -> pd.DataFrame:

@@ -61,7 +61,7 @@ jobs:
           t=trial_at(reg,int(os.environ['TRIAL_INDEX']))
           print('TRIAL_ID='+str(t['trial_id']))
           PY
-      - name: Restore and verify durable folds from an earlier attempt of this run
+      - name: Restore and verify durable folds across runs for this exact source lineage
         env:
           GH_TOKEN: '${{ github.token }}'
           TRIAL_INDEX: '${{ matrix.index }}'
@@ -70,26 +70,40 @@ jobs:
           mkdir -p "artifacts/ridge_fold_checkpoints/${TRIAL_ID}"
           for fid in $(seq -w 0 11); do
             name="ar-tf-ridge-fold-$(printf '%02d' "$TRIAL_INDEX")-${fid}"
-            meta="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?name=${name}&per_page=100")"
-            count="$(printf '%s' "$meta" | jq -r '.total_count')"
-            test "$count" -le 1
-            if [ "$count" -eq 0 ]; then
-              continue
-            fi
-            expired="$(printf '%s' "$meta" | jq -r '.artifacts[0].expired')"
-            id="$(printf '%s' "$meta" | jq -r '.artifacts[0].id')"
-            digest="$(printf '%s' "$meta" | jq -r '.artifacts[0].digest')"
-            test "$expired" = "false"
-            test -n "$id"; test "$id" != "null"
-            test "$digest" != "null"; test -n "$digest"
-            zip="/tmp/${name}.zip"
-            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
-            actual="sha256:$(sha256sum "$zip" | cut -d' ' -f1)"
-            test "$actual" = "$digest"
-            dest="artifacts/ridge_fold_checkpoints/${TRIAL_ID}/fold-${fid}"
-            mkdir -p "$dest"
-            unzip -q "$zip" -d "$dest"
-            test -s "$dest/manifest.json"; test -s "$dest/payload.json"
+            meta="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${name}&per_page=100" --jq '.artifacts[]' || true)"
+            [ -n "$meta" ] || continue
+            restored=false
+            while IFS= read -r row; do
+              [ -n "$row" ] || continue
+              expired="$(printf '%s' "$row" | jq -r '.expired')"
+              id="$(printf '%s' "$row" | jq -r '.id')"
+              digest="$(printf '%s' "$row" | jq -r '.digest')"
+              [ "$expired" = "false" ] || continue
+              [ -n "$id" ] && [ "$id" != "null" ] || continue
+              [ -n "$digest" ] && [ "$digest" != "null" ] || continue
+              zip="/tmp/${name}-${id}.zip"
+              gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+              actual="sha256:$(sha256sum "$zip" | cut -d' ' -f1)"
+              [ "$actual" = "$digest" ] || continue
+              tmp="/tmp/${name}-${id}"; rm -rf "$tmp"; mkdir -p "$tmp"; unzip -q "$zip" -d "$tmp"
+              [ -s "$tmp/manifest.json" ] && [ -s "$tmp/payload.json" ] || continue
+              # Fast prefilter. The composite fold step performs the full frozen-lineage
+              # validation (dataset/registry/folds/config/params/seed/holdout/digest).
+              if ! SOURCE_SHA="$SOURCE_SHA" CP02_SHA="${CP02_ARTIFACT_DIGEST#sha256:}" python - "$tmp/manifest.json" <<'PY'
+import json,os,sys
+m=json.load(open(sys.argv[1])); l=m.get("lineage",{})
+assert m.get("state")=="COMMITTED"
+assert l.get("source_commit_sha")==os.environ["SOURCE_SHA"]
+assert l.get("parent_checkpoint_sha256")==os.environ["CP02_SHA"]
+assert not l.get("holdout_opened") and not l.get("holdout_evaluated")
+PY
+              then continue; fi
+              dest="artifacts/ridge_fold_checkpoints/${TRIAL_ID}/fold-${fid}"
+              rm -rf "$dest"; mkdir -p "$dest"; cp "$tmp/manifest.json" "$tmp/payload.json" "$dest/"
+              restored=true
+              break
+            done <<< "$meta"
+            $restored || true
           done
       - name: Ridge fold 00
         uses: ./.github/actions/ar-tf-ridge-fold
@@ -141,7 +155,11 @@ jobs:
     needs: ridge-trials
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    outputs: {decision: '${{ steps.reduce.outputs.decision }}', gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'}
+    outputs:
+      decision: '${{ steps.reduce.outputs.decision }}'
+      gbm_admitted: '${{ steps.reduce.outputs.gbm_admitted }}'
+      cp03_artifact_id: '${{ steps.cp03.outputs.artifact-id }}'
+      cp03_artifact_digest: '${{ steps.cp03.outputs.artifact-digest }}'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
@@ -165,7 +183,166 @@ jobs:
         env: {GH_TOKEN: '${{ github.token }}'}
         run: |
           set -euo pipefail; mkdir -p fold-zips fold-artifacts trial-zips trials
+          # Fold checkpoints are content-addressed by frozen lineage and may come
+          # from earlier runs of this exact SOURCE_SHA. Trial outputs must belong
+          # to this run, because they are finalized only after 12 verified folds.
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" --jq '.artifacts[]' > repo-artifacts.jsonl
           gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" --jq '.artifacts[]' > run-artifacts.jsonl
+          python - <<'PY'
+import json,re
+from pathlib import Path
+rows=[json.loads(x) for x in Path('repo-artifacts.jsonl').read_text().splitlines() if x.strip()]
+current=[json.loads(x) for x in Path('run-artifacts.jsonl').read_text().splitlines() if x.strip()]
+fold_re=re.compile(r'^ar-tf-ridge-fold-(\\d{2})-(\\d{2})
+          while IFS=$'\t' read -r name id digest; do
+            zip="trial-zips/${name}.zip"; gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            test "sha256:$(sha256sum "$zip"|cut -d' ' -f1)" = "$digest"
+            mkdir -p "trials/${name}"; unzip -q "$zip" -d "trials/${name}"
+          done < trial-artifact-map.tsv
+      - name: Cryptographically verify all 324 internal fold checkpoints and frozen lineage
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          from ar_tf.ml_trials import _fold_lineage,_folds
+          from ar_tf.ridge_fold_resume import load_committed_fold,validate_fold_inventory
+          from ar_tf.ridge_resume import ridge_trials
+          root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; fp=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
+          reg=json.loads(rp.read_text()); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          trials=ridge_trials(reg); folds=_folds(fp); records=[]
+          base={'parent_checkpoint_sha256':'974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce','source_commit_sha':'${{ github.event.pull_request.head.sha || github.sha }}','dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
+          for i,t in enumerate(trials):
+              for fid,fold in enumerate(folds):
+                  expected=_fold_lineage(base,fold=fold,family='ridge',params=t['params'],seed=int(t['seed']),max_training_rows_per_fold=100_000)
+                  mp=Path('fold-artifacts')/f'ar-tf-ridge-fold-{i:02d}-{fid:02d}'/'manifest.json'
+                  load_committed_fold(mp,expected_trial_id=t['trial_id'],expected_fold_id=fid,expected_lineage=expected)
+                  records.append({'trial_id':t['trial_id'],'fold_id':fid})
+          inventory=validate_fold_inventory(records,[t['trial_id'] for t in trials])
+          assert inventory['verified_folds']==324 and inventory['verified_trials']==27
+          (root/'ridge-fold-inventory.json').write_text(json.dumps(inventory,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Reduce verified 27/27 and apply frozen adjudication
+        id: reduce
+        run: |
+          python - <<'PY'
+          import json,os,pandas as pd
+          from pathlib import Path
+          from ar_tf.research_panel import load_research_panel
+          from ar_tf.ridge_resume import load_trial,reduce_and_adjudicate
+          from ar_tf.classical_tournament import write_ridge_stage
+          root=Path('artifacts/g4_g13'); folds='config/ar_tf_oos_folds_2026.yaml'; reg=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text()); panel=load_research_panel(root/'frozen_dataset',folds)
+          results=[load_trial(Path('trials')/f'ar-tf-ridge-trial-{i}') for i in range(27)]
+          r=reduce_and_adjudicate(panel=panel,registry=reg,folds_path=folds,structural_base=pd.read_csv(root/'structural/structural-oos-base.csv',index_col=0,parse_dates=True),structural_stressed=pd.read_csv(root/'structural/structural-oos-stressed.csv',index_col=0,parse_dates=True),structural_severe=pd.read_csv(root/'structural/structural-oos-severe.csv',index_col=0,parse_dates=True),results=results)
+          assert r['ridge_trial_count']==27 and r['trial_count_total']==149 and not r['ridge_failures']
+          assert not r['holdout_opened'] and not r['holdout_evaluated'] and not r['paper_authorized'] and not r['testnet_authorized'] and not r['live_authorized']
+          write_ridge_stage(r,root/'classical/ridge')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('decision='+r['decision']+'\n'+'gbm_admitted='+str(bool(r['gradient_boosting_admitted'])).lower()+'\n')
+          PY
+      - name: Equivalence, contract, and adversarial tests
+        run: pytest -q tests/test_ar_tf_ridge_scientific_equivalence.py tests/test_ar_tf_ridge_fold_resume.py tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
+      - name: Build cryptographic evidence chain from verified 324 -> 27 -> 149
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --cp02-digest "$CP02_ARTIFACT_DIGEST" \
+            --github-run-id "$GITHUB_RUN_ID"
+          test -s artifacts/g4_g13/evidence/fold-inventory.json
+          test -s artifacts/g4_g13/evidence/ridge-inventory.json
+          test -s artifacts/g4_g13/evidence/tournament-inventory.json
+          test -s artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+          test -s artifacts/g4_g13/evidence/cp03-slsa-provenance.json
+      - name: Evidence chain contract tests
+        run: pytest -q tests/test_ar_tf_evidence_chain.py tests/test_ar_tf_evidence_gate_provenance.py
+      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149 + evidence binding
+        run: |
+          cd artifacts/g4_g13
+          rm -f checkpoint-02.sha256
+          find . -type f ! -name checkpoint-03-final.sha256 -print0 | sort -z | xargs -0 sha256sum > checkpoint-03-final.sha256
+          test -s ridge-fold-inventory.json
+          test -s classical/ridge/ridge-stage.json
+      - id: cp03
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-checkpoint-03-final-ridge-27
+          path: artifacts/g4_g13/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record CP03 GitHub artifact identity
+        run: |
+          printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
+  cp03-signature:
+    name: cp03-keyless-signature
+    needs: ridge-reducer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact CP03 artifact bytes and verify GitHub SHA-256
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          ARTIFACT_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+          EXPECTED_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .expired cp03-meta.json)" = false
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Keyless sign exact CP03 GitHub artifact bytes
+        run: cosign sign-blob --yes --bundle cp03.sigstore.json cp03.zip
+      - name: Verify exact workflow identity, GitHub OIDC issuer, and signed CP03 bytes
+        run: |
+          cosign verify-blob cp03.zip \
+            --bundle cp03.sigstore.json \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed\\.yml@refs/(heads|pull)/.+$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
+        env:
+          SOURCE_SHA: '${{ env.SOURCE_SHA }}'
+          CP03_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+          CP03_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out={"schema_version":"1.0.0","gate_id":"EVIDENCE_INTEGRITY","passed":True,
+               "source_sha":os.environ["SOURCE_SHA"],"cp03_artifact_id":os.environ["CP03_ID"],
+               "cp03_artifact_digest":os.environ["CP03_DIGEST"],
+               "sigstore_bundle_sha256":hashlib.sha256(Path("cp03.sigstore.json").read_bytes()).hexdigest(),
+               "holdout_opened":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False}
+          Path("evidence-integrity.json").write_text(json.dumps(out,sort_keys=True,indent=2)+"\\n")
+          PY
+      - id: signed
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-sigstore-verification
+          path: |
+            cp03.sigstore.json
+            cp03-meta.json
+            evidence-integrity.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record signed evidence identity
+        run: |
+          printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
+  gbm-gate:
+    needs: [ridge-reducer, cp03-signature]
+    if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo 'Ridge evidence complete; independent GBM executor remains uncertified.'
+          echo 'Fail closed: no GBM, holdout, PAPER, TESTNET, SHADOW, LIVE_PILOT or LIVE authorization.'; exit 1
+)
+trial_re=re.compile(r'^ar-tf-ridge-trial-(\\d+)
           python - <<'PY'
           import json,re
           from pathlib import Path
@@ -255,7 +432,20 @@ jobs:
           PY
       - name: Equivalence, contract, and adversarial tests
         run: pytest -q tests/test_ar_tf_ridge_scientific_equivalence.py tests/test_ar_tf_ridge_fold_resume.py tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
-      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149
+      - name: Build cryptographic evidence chain from verified 324 -> 27 -> 149
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --cp02-digest "$CP02_ARTIFACT_DIGEST" \
+            --github-run-id "$GITHUB_RUN_ID"
+          test -s artifacts/g4_g13/evidence/fold-inventory.json
+          test -s artifacts/g4_g13/evidence/ridge-inventory.json
+          test -s artifacts/g4_g13/evidence/tournament-inventory.json
+          test -s artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+          test -s artifacts/g4_g13/evidence/cp03-slsa-provenance.json
+      - name: Evidence chain contract tests
+        run: pytest -q tests/test_ar_tf_evidence_chain.py tests/test_ar_tf_evidence_gate_provenance.py
+      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149 + evidence binding
         run: |
           cd artifacts/g4_g13
           rm -f checkpoint-02.sha256
@@ -273,8 +463,509 @@ jobs:
       - name: Record CP03 GitHub artifact identity
         run: |
           printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
-  gbm-gate:
+  cp03-signature:
+    name: cp03-keyless-signature
     needs: ridge-reducer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact CP03 artifact bytes and verify GitHub SHA-256
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          ARTIFACT_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+          EXPECTED_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .expired cp03-meta.json)" = false
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Keyless sign exact CP03 GitHub artifact bytes
+        run: cosign sign-blob --yes --bundle cp03.sigstore.json cp03.zip
+      - name: Verify exact workflow identity, GitHub OIDC issuer, and signed CP03 bytes
+        run: |
+          cosign verify-blob cp03.zip \
+            --bundle cp03.sigstore.json \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed\\.yml@refs/(heads|pull)/.+$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
+        env:
+          SOURCE_SHA: '${{ env.SOURCE_SHA }}'
+          CP03_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+          CP03_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out={"schema_version":"1.0.0","gate_id":"EVIDENCE_INTEGRITY","passed":True,
+               "source_sha":os.environ["SOURCE_SHA"],"cp03_artifact_id":os.environ["CP03_ID"],
+               "cp03_artifact_digest":os.environ["CP03_DIGEST"],
+               "sigstore_bundle_sha256":hashlib.sha256(Path("cp03.sigstore.json").read_bytes()).hexdigest(),
+               "holdout_opened":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False}
+          Path("evidence-integrity.json").write_text(json.dumps(out,sort_keys=True,indent=2)+"\\n")
+          PY
+      - id: signed
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-sigstore-verification
+          path: |
+            cp03.sigstore.json
+            cp03-meta.json
+            evidence-integrity.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record signed evidence identity
+        run: |
+          printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
+  gbm-gate:
+    needs: [ridge-reducer, cp03-signature]
+    if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo 'Ridge evidence complete; independent GBM executor remains uncertified.'
+          echo 'Fail closed: no GBM, holdout, PAPER, TESTNET, SHADOW, LIVE_PILOT or LIVE authorization.'; exit 1
+)
+# Keep every non-expired candidate fold; exact lineage is adjudicated after download.
+folds={}
+for r in rows:
+    m=fold_re.match(r['name'])
+    if m and r.get('expired') is False and r.get('digest'):
+        i,f=map(int,m.groups())
+        if 0<=i<27 and 0<=f<12: folds.setdefault((i,f),[]).append(r)
+trials={}
+for r in current:
+    m=trial_re.match(r['name'])
+    if m:
+        i=int(m.group(1))
+        if 0<=i<27: trials.setdefault(i,[]).append(r)
+expected={(i,f) for i in range(27) for f in range(12)}
+if set(folds)!=expected: raise SystemExit(f'cross-run fold inventory candidates incomplete: present={len(folds)} missing={len(expected-set(folds))}')
+if set(trials)!=set(range(27)) or any(len(v)!=1 for v in trials.values()): raise SystemExit(f'current-run 27-trial inventory violation: present={len(trials)}')
+with Path('fold-candidates.jsonl').open('w') as h:
+    for key in sorted(folds):
+        for r in sorted(folds[key],key=lambda x:x['id'],reverse=True): h.write(json.dumps(r,sort_keys=True)+'\\n')
+with Path('trial-artifact-map.tsv').open('w') as h:
+    for i in range(27):
+        r=trials[i][0]
+        if r.get('expired') is not False or not r.get('digest'): raise SystemExit(f'invalid trial metadata: {r["name"]}')
+        h.write(f'{r["name"]}\\t{r["id"]}\\t{r["digest"]}\\n')
+PY
+          python - <<'PY'
+# Materialize exactly one cryptographically valid candidate per fold.
+import hashlib,json,os,subprocess,zipfile
+from pathlib import Path
+from ar_tf.ml_trials import _fold_lineage,_folds
+from ar_tf.ridge_fold_resume import load_committed_fold
+from ar_tf.ridge_resume import ridge_trials
+root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; fp=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
+reg=json.loads(rp.read_text()); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+trials=ridge_trials(reg); folds=_folds(fp)
+base={'parent_checkpoint_sha256':os.environ['CP02_ARTIFACT_DIGEST'].removeprefix('sha256:'),'source_commit_sha':os.environ['SOURCE_SHA'],'dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
+rows=[json.loads(x) for x in Path('fold-candidates.jsonl').read_text().splitlines()]
+by={}
+for r in rows:
+    m=re.match(r'^ar-tf-ridge-fold-(\\d{2})-(\\d{2})
+          python - <<'PY'
+          import json,re
+          from pathlib import Path
+          rows=[json.loads(x) for x in Path('run-artifacts.jsonl').read_text().splitlines() if x.strip()]
+          by_name={}
+          for r in rows:
+              n=r['name']; by_name.setdefault(n,[]).append(r)
+          fold_re=re.compile(r'^ar-tf-ridge-fold-(\d{2})-(\d{2})$')
+          trial_re=re.compile(r'^ar-tf-ridge-trial-(\d+)$')
+          folds=[]; trials=[]
+          for name,items in by_name.items():
+              m=fold_re.match(name)
+              if m:
+                  if len(items)!=1: raise SystemExit(f'duplicate fold artifact name: {name}')
+                  i,f=map(int,m.groups())
+                  if not (0<=i<27 and 0<=f<12): raise SystemExit(f'invalid fold artifact identity: {name}')
+                  folds.append((i,f,items[0]))
+              m=trial_re.match(name)
+              if m:
+                  if len(items)!=1: raise SystemExit(f'duplicate trial artifact name: {name}')
+                  i=int(m.group(1))
+                  if not 0<=i<27: raise SystemExit(f'invalid trial artifact identity: {name}')
+                  trials.append((i,items[0]))
+          expected={(i,f) for i in range(27) for f in range(12)}
+          actual={(i,f) for i,f,_ in folds}
+          if actual!=expected or len(folds)!=324:
+              raise SystemExit(f'324-fold inventory violation: present={len(folds)} missing={len(expected-actual)} extra={len(actual-expected)}')
+          if {i for i,_ in trials}!=set(range(27)) or len(trials)!=27:
+              raise SystemExit(f'27-trial inventory violation: present={len(trials)}')
+          with Path('fold-artifact-map.tsv').open('w') as h:
+              for i,f,r in sorted(folds):
+                  if r.get('expired') is not False or not r.get('digest'): raise SystemExit(f'invalid fold metadata: {r["name"]}')
+                  h.write(f'{r["name"]}\t{r["id"]}\t{r["digest"]}\n')
+          with Path('trial-artifact-map.tsv').open('w') as h:
+              for i,r in sorted(trials):
+                  if r.get('expired') is not False or not r.get('digest'): raise SystemExit(f'invalid trial metadata: {r["name"]}')
+                  h.write(f'{r["name"]}\t{r["id"]}\t{r["digest"]}\n')
+          PY
+          while IFS=$'\t' read -r name id digest; do
+            zip="fold-zips/${name}.zip"; gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            test "sha256:$(sha256sum "$zip"|cut -d' ' -f1)" = "$digest"
+            mkdir -p "fold-artifacts/${name}"; unzip -q "$zip" -d "fold-artifacts/${name}"
+          done < fold-artifact-map.tsv
+          while IFS=$'\t' read -r name id digest; do
+            zip="trial-zips/${name}.zip"; gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            test "sha256:$(sha256sum "$zip"|cut -d' ' -f1)" = "$digest"
+            mkdir -p "trials/${name}"; unzip -q "$zip" -d "trials/${name}"
+          done < trial-artifact-map.tsv
+      - name: Cryptographically verify all 324 internal fold checkpoints and frozen lineage
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          from ar_tf.ml_trials import _fold_lineage,_folds
+          from ar_tf.ridge_fold_resume import load_committed_fold,validate_fold_inventory
+          from ar_tf.ridge_resume import ridge_trials
+          root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; fp=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
+          reg=json.loads(rp.read_text()); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          trials=ridge_trials(reg); folds=_folds(fp); records=[]
+          base={'parent_checkpoint_sha256':'974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce','source_commit_sha':'${{ github.event.pull_request.head.sha || github.sha }}','dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
+          for i,t in enumerate(trials):
+              for fid,fold in enumerate(folds):
+                  expected=_fold_lineage(base,fold=fold,family='ridge',params=t['params'],seed=int(t['seed']),max_training_rows_per_fold=100_000)
+                  mp=Path('fold-artifacts')/f'ar-tf-ridge-fold-{i:02d}-{fid:02d}'/'manifest.json'
+                  load_committed_fold(mp,expected_trial_id=t['trial_id'],expected_fold_id=fid,expected_lineage=expected)
+                  records.append({'trial_id':t['trial_id'],'fold_id':fid})
+          inventory=validate_fold_inventory(records,[t['trial_id'] for t in trials])
+          assert inventory['verified_folds']==324 and inventory['verified_trials']==27
+          (root/'ridge-fold-inventory.json').write_text(json.dumps(inventory,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Reduce verified 27/27 and apply frozen adjudication
+        id: reduce
+        run: |
+          python - <<'PY'
+          import json,os,pandas as pd
+          from pathlib import Path
+          from ar_tf.research_panel import load_research_panel
+          from ar_tf.ridge_resume import load_trial,reduce_and_adjudicate
+          from ar_tf.classical_tournament import write_ridge_stage
+          root=Path('artifacts/g4_g13'); folds='config/ar_tf_oos_folds_2026.yaml'; reg=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text()); panel=load_research_panel(root/'frozen_dataset',folds)
+          results=[load_trial(Path('trials')/f'ar-tf-ridge-trial-{i}') for i in range(27)]
+          r=reduce_and_adjudicate(panel=panel,registry=reg,folds_path=folds,structural_base=pd.read_csv(root/'structural/structural-oos-base.csv',index_col=0,parse_dates=True),structural_stressed=pd.read_csv(root/'structural/structural-oos-stressed.csv',index_col=0,parse_dates=True),structural_severe=pd.read_csv(root/'structural/structural-oos-severe.csv',index_col=0,parse_dates=True),results=results)
+          assert r['ridge_trial_count']==27 and r['trial_count_total']==149 and not r['ridge_failures']
+          assert not r['holdout_opened'] and not r['holdout_evaluated'] and not r['paper_authorized'] and not r['testnet_authorized'] and not r['live_authorized']
+          write_ridge_stage(r,root/'classical/ridge')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('decision='+r['decision']+'\n'+'gbm_admitted='+str(bool(r['gradient_boosting_admitted'])).lower()+'\n')
+          PY
+      - name: Equivalence, contract, and adversarial tests
+        run: pytest -q tests/test_ar_tf_ridge_scientific_equivalence.py tests/test_ar_tf_ridge_fold_resume.py tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
+      - name: Build cryptographic evidence chain from verified 324 -> 27 -> 149
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --cp02-digest "$CP02_ARTIFACT_DIGEST" \
+            --github-run-id "$GITHUB_RUN_ID"
+          test -s artifacts/g4_g13/evidence/fold-inventory.json
+          test -s artifacts/g4_g13/evidence/ridge-inventory.json
+          test -s artifacts/g4_g13/evidence/tournament-inventory.json
+          test -s artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+          test -s artifacts/g4_g13/evidence/cp03-slsa-provenance.json
+      - name: Evidence chain contract tests
+        run: pytest -q tests/test_ar_tf_evidence_chain.py tests/test_ar_tf_evidence_gate_provenance.py
+      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149 + evidence binding
+        run: |
+          cd artifacts/g4_g13
+          rm -f checkpoint-02.sha256
+          find . -type f ! -name checkpoint-03-final.sha256 -print0 | sort -z | xargs -0 sha256sum > checkpoint-03-final.sha256
+          test -s ridge-fold-inventory.json
+          test -s classical/ridge/ridge-stage.json
+      - id: cp03
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-checkpoint-03-final-ridge-27
+          path: artifacts/g4_g13/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record CP03 GitHub artifact identity
+        run: |
+          printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
+  cp03-signature:
+    name: cp03-keyless-signature
+    needs: ridge-reducer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact CP03 artifact bytes and verify GitHub SHA-256
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          ARTIFACT_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+          EXPECTED_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .expired cp03-meta.json)" = false
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Keyless sign exact CP03 GitHub artifact bytes
+        run: cosign sign-blob --yes --bundle cp03.sigstore.json cp03.zip
+      - name: Verify exact workflow identity, GitHub OIDC issuer, and signed CP03 bytes
+        run: |
+          cosign verify-blob cp03.zip \
+            --bundle cp03.sigstore.json \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed\\.yml@refs/(heads|pull)/.+$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
+        env:
+          SOURCE_SHA: '${{ env.SOURCE_SHA }}'
+          CP03_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+          CP03_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out={"schema_version":"1.0.0","gate_id":"EVIDENCE_INTEGRITY","passed":True,
+               "source_sha":os.environ["SOURCE_SHA"],"cp03_artifact_id":os.environ["CP03_ID"],
+               "cp03_artifact_digest":os.environ["CP03_DIGEST"],
+               "sigstore_bundle_sha256":hashlib.sha256(Path("cp03.sigstore.json").read_bytes()).hexdigest(),
+               "holdout_opened":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False}
+          Path("evidence-integrity.json").write_text(json.dumps(out,sort_keys=True,indent=2)+"\\n")
+          PY
+      - id: signed
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-sigstore-verification
+          path: |
+            cp03.sigstore.json
+            cp03-meta.json
+            evidence-integrity.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record signed evidence identity
+        run: |
+          printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
+  gbm-gate:
+    needs: [ridge-reducer, cp03-signature]
+    if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo 'Ridge evidence complete; independent GBM executor remains uncertified.'
+          echo 'Fail closed: no GBM, holdout, PAPER, TESTNET, SHADOW, LIVE_PILOT or LIVE authorization.'; exit 1
+,r['name']); by.setdefault(tuple(map(int,m.groups())),[]).append(r)
+for (i,fid), candidates in sorted(by.items()):
+    expected=_fold_lineage(base,fold=folds[fid],family='ridge',params=trials[i]['params'],seed=int(trials[i]['seed']),max_training_rows_per_fold=100_000)
+    ok=False
+    for r in candidates:
+        z=Path('fold-zips')/f"{r['name']}-{r['id']}.zip"; z.parent.mkdir(exist_ok=True)
+        with z.open('wb') as out: subprocess.run(['gh','api',f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{r['id']}/zip"],check=True,stdout=out)
+        if 'sha256:'+hashlib.sha256(z.read_bytes()).hexdigest()!=r['digest']: continue
+        dest=Path('fold-artifacts')/r['name']; 
+        if dest.exists():
+            import shutil; shutil.rmtree(dest)
+        dest.mkdir(parents=True)
+        with zipfile.ZipFile(z) as zz: zz.extractall(dest)
+        try: load_committed_fold(dest/'manifest.json',expected_trial_id=trials[i]['trial_id'],expected_fold_id=fid,expected_lineage=expected)
+        except Exception: continue
+        ok=True; break
+    if not ok: raise SystemExit(f'no exact-lineage checkpoint candidate for trial={i} fold={fid}')
+PY
+          python - <<'PY'
+          import json,re
+          from pathlib import Path
+          rows=[json.loads(x) for x in Path('run-artifacts.jsonl').read_text().splitlines() if x.strip()]
+          by_name={}
+          for r in rows:
+              n=r['name']; by_name.setdefault(n,[]).append(r)
+          fold_re=re.compile(r'^ar-tf-ridge-fold-(\d{2})-(\d{2})$')
+          trial_re=re.compile(r'^ar-tf-ridge-trial-(\d+)$')
+          folds=[]; trials=[]
+          for name,items in by_name.items():
+              m=fold_re.match(name)
+              if m:
+                  if len(items)!=1: raise SystemExit(f'duplicate fold artifact name: {name}')
+                  i,f=map(int,m.groups())
+                  if not (0<=i<27 and 0<=f<12): raise SystemExit(f'invalid fold artifact identity: {name}')
+                  folds.append((i,f,items[0]))
+              m=trial_re.match(name)
+              if m:
+                  if len(items)!=1: raise SystemExit(f'duplicate trial artifact name: {name}')
+                  i=int(m.group(1))
+                  if not 0<=i<27: raise SystemExit(f'invalid trial artifact identity: {name}')
+                  trials.append((i,items[0]))
+          expected={(i,f) for i in range(27) for f in range(12)}
+          actual={(i,f) for i,f,_ in folds}
+          if actual!=expected or len(folds)!=324:
+              raise SystemExit(f'324-fold inventory violation: present={len(folds)} missing={len(expected-actual)} extra={len(actual-expected)}')
+          if {i for i,_ in trials}!=set(range(27)) or len(trials)!=27:
+              raise SystemExit(f'27-trial inventory violation: present={len(trials)}')
+          with Path('fold-artifact-map.tsv').open('w') as h:
+              for i,f,r in sorted(folds):
+                  if r.get('expired') is not False or not r.get('digest'): raise SystemExit(f'invalid fold metadata: {r["name"]}')
+                  h.write(f'{r["name"]}\t{r["id"]}\t{r["digest"]}\n')
+          with Path('trial-artifact-map.tsv').open('w') as h:
+              for i,r in sorted(trials):
+                  if r.get('expired') is not False or not r.get('digest'): raise SystemExit(f'invalid trial metadata: {r["name"]}')
+                  h.write(f'{r["name"]}\t{r["id"]}\t{r["digest"]}\n')
+          PY
+          while IFS=$'\t' read -r name id digest; do
+            zip="fold-zips/${name}.zip"; gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            test "sha256:$(sha256sum "$zip"|cut -d' ' -f1)" = "$digest"
+            mkdir -p "fold-artifacts/${name}"; unzip -q "$zip" -d "fold-artifacts/${name}"
+          done < fold-artifact-map.tsv
+          while IFS=$'\t' read -r name id digest; do
+            zip="trial-zips/${name}.zip"; gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "$zip"
+            test "sha256:$(sha256sum "$zip"|cut -d' ' -f1)" = "$digest"
+            mkdir -p "trials/${name}"; unzip -q "$zip" -d "trials/${name}"
+          done < trial-artifact-map.tsv
+      - name: Cryptographically verify all 324 internal fold checkpoints and frozen lineage
+        run: |
+          python - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          from ar_tf.ml_trials import _fold_lineage,_folds
+          from ar_tf.ridge_fold_resume import load_committed_fold,validate_fold_inventory
+          from ar_tf.ridge_resume import ridge_trials
+          root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; fp=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
+          reg=json.loads(rp.read_text()); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          trials=ridge_trials(reg); folds=_folds(fp); records=[]
+          base={'parent_checkpoint_sha256':'974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce','source_commit_sha':'${{ github.event.pull_request.head.sha || github.sha }}','dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
+          for i,t in enumerate(trials):
+              for fid,fold in enumerate(folds):
+                  expected=_fold_lineage(base,fold=fold,family='ridge',params=t['params'],seed=int(t['seed']),max_training_rows_per_fold=100_000)
+                  mp=Path('fold-artifacts')/f'ar-tf-ridge-fold-{i:02d}-{fid:02d}'/'manifest.json'
+                  load_committed_fold(mp,expected_trial_id=t['trial_id'],expected_fold_id=fid,expected_lineage=expected)
+                  records.append({'trial_id':t['trial_id'],'fold_id':fid})
+          inventory=validate_fold_inventory(records,[t['trial_id'] for t in trials])
+          assert inventory['verified_folds']==324 and inventory['verified_trials']==27
+          (root/'ridge-fold-inventory.json').write_text(json.dumps(inventory,sort_keys=True,indent=2)+'\n')
+          PY
+      - name: Reduce verified 27/27 and apply frozen adjudication
+        id: reduce
+        run: |
+          python - <<'PY'
+          import json,os,pandas as pd
+          from pathlib import Path
+          from ar_tf.research_panel import load_research_panel
+          from ar_tf.ridge_resume import load_trial,reduce_and_adjudicate
+          from ar_tf.classical_tournament import write_ridge_stage
+          root=Path('artifacts/g4_g13'); folds='config/ar_tf_oos_folds_2026.yaml'; reg=json.loads((root/'preregistration/preregistered-trial-registry.json').read_text()); panel=load_research_panel(root/'frozen_dataset',folds)
+          results=[load_trial(Path('trials')/f'ar-tf-ridge-trial-{i}') for i in range(27)]
+          r=reduce_and_adjudicate(panel=panel,registry=reg,folds_path=folds,structural_base=pd.read_csv(root/'structural/structural-oos-base.csv',index_col=0,parse_dates=True),structural_stressed=pd.read_csv(root/'structural/structural-oos-stressed.csv',index_col=0,parse_dates=True),structural_severe=pd.read_csv(root/'structural/structural-oos-severe.csv',index_col=0,parse_dates=True),results=results)
+          assert r['ridge_trial_count']==27 and r['trial_count_total']==149 and not r['ridge_failures']
+          assert not r['holdout_opened'] and not r['holdout_evaluated'] and not r['paper_authorized'] and not r['testnet_authorized'] and not r['live_authorized']
+          write_ridge_stage(r,root/'classical/ridge')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('decision='+r['decision']+'\n'+'gbm_admitted='+str(bool(r['gradient_boosting_admitted'])).lower()+'\n')
+          PY
+      - name: Equivalence, contract, and adversarial tests
+        run: pytest -q tests/test_ar_tf_ridge_scientific_equivalence.py tests/test_ar_tf_ridge_fold_resume.py tests/test_ar_tf_ridge_resume.py tests/test_ar_tf_g4_g13.py tests/test_ar_tf_structural_tournament.py tests/test_ar_tf_trial_registry.py tests/test_ar_tf_dataset_binding.py
+      - name: Build cryptographic evidence chain from verified 324 -> 27 -> 149
+        run: |
+          python scripts/ar_tf_build_cp03_evidence.py \
+            --source-sha "$SOURCE_SHA" \
+            --cp02-digest "$CP02_ARTIFACT_DIGEST" \
+            --github-run-id "$GITHUB_RUN_ID"
+          test -s artifacts/g4_g13/evidence/fold-inventory.json
+          test -s artifacts/g4_g13/evidence/ridge-inventory.json
+          test -s artifacts/g4_g13/evidence/tournament-inventory.json
+          test -s artifacts/g4_g13/evidence/cp03-evidence-envelope.json
+          test -s artifacts/g4_g13/evidence/cp03-slsa-provenance.json
+      - name: Evidence chain contract tests
+        run: pytest -q tests/test_ar_tf_evidence_chain.py tests/test_ar_tf_evidence_gate_provenance.py
+      - name: Seal CP03-FINAL only after verified 324 -> 27 -> 149 + evidence binding
+        run: |
+          cd artifacts/g4_g13
+          rm -f checkpoint-02.sha256
+          find . -type f ! -name checkpoint-03-final.sha256 -print0 | sort -z | xargs -0 sha256sum > checkpoint-03-final.sha256
+          test -s ridge-fold-inventory.json
+          test -s classical/ridge/ridge-stage.json
+      - id: cp03
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-checkpoint-03-final-ridge-27
+          path: artifacts/g4_g13/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record CP03 GitHub artifact identity
+        run: |
+          printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
+  cp03-signature:
+    name: cp03-keyless-signature
+    needs: ridge-reducer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Download exact CP03 artifact bytes and verify GitHub SHA-256
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          ARTIFACT_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+          EXPECTED_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .expired cp03-meta.json)" = false
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+      - name: Keyless sign exact CP03 GitHub artifact bytes
+        run: cosign sign-blob --yes --bundle cp03.sigstore.json cp03.zip
+      - name: Verify exact workflow identity, GitHub OIDC issuer, and signed CP03 bytes
+        run: |
+          cosign verify-blob cp03.zip \
+            --bundle cp03.sigstore.json \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ar-tf-g4-g13-checkpointed\\.yml@refs/(heads|pull)/.+$" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+      - name: Emit EVIDENCE_INTEGRITY PASS only after cryptographic verification
+        env:
+          SOURCE_SHA: '${{ env.SOURCE_SHA }}'
+          CP03_DIGEST: '${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}'
+          CP03_ID: '${{ needs.ridge-reducer.outputs.cp03_artifact_id }}'
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          out={"schema_version":"1.0.0","gate_id":"EVIDENCE_INTEGRITY","passed":True,
+               "source_sha":os.environ["SOURCE_SHA"],"cp03_artifact_id":os.environ["CP03_ID"],
+               "cp03_artifact_digest":os.environ["CP03_DIGEST"],
+               "sigstore_bundle_sha256":hashlib.sha256(Path("cp03.sigstore.json").read_bytes()).hexdigest(),
+               "holdout_opened":False,"paper_authorized":False,"testnet_authorized":False,"live_authorized":False}
+          Path("evidence-integrity.json").write_text(json.dumps(out,sort_keys=True,indent=2)+"\\n")
+          PY
+      - id: signed
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: ar-tf-cp03-sigstore-verification
+          path: |
+            cp03.sigstore.json
+            cp03-meta.json
+            evidence-integrity.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: false
+      - name: Record signed evidence identity
+        run: |
+          printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
+  gbm-gate:
+    needs: [ridge-reducer, cp03-signature]
     if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
     runs-on: ubuntu-latest
     steps:
