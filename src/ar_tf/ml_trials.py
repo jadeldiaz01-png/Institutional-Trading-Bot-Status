@@ -60,6 +60,10 @@ def _long_features(features: dict[str, pd.DataFrame], dates: pd.DatetimeIndex) -
 
 def _long_training_frame(features: dict[str, pd.DataFrame], target: pd.DataFrame, dates: pd.DatetimeIndex) -> pd.DataFrame:
     x=_long_features(features,dates)
+    if not target.index.is_unique:
+        raise ValueError("target timestamps must be unique")
+    if not target.columns.is_unique:
+        raise ValueError("target market columns must be unique")
     y=target.reindex(dates).stack().rename("target")
     y.index=y.index.set_names(["timestamp","market_id"])
     if not x.index.is_unique:
