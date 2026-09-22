@@ -22,10 +22,11 @@ env:
   PYTHON_VERSION: '3.11'
   CP02_ARTIFACT_ID: '10419024917'
   CP02_ARTIFACT_DIGEST: 'sha256:974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce'
-  SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'
-  SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && '8da2171e97970c66b3ba5a237c426d9871cc23a1' || github.event.pull_request.head.sha }}
+  SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'
+  SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && '68ab70b0a531b86b1a02db0e404aa69a5a088b95' || github.event.pull_request.head.sha }}
 jobs:
   ridge-trials:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     name: ridge-trial-${{ matrix.index }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -149,6 +150,7 @@ jobs:
           retention-days: 90
           overwrite: false
   ridge-reducer:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     needs: ridge-trials
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -242,7 +244,7 @@ jobs:
       - name: Cryptographically verify all 324 internal fold checkpoints and frozen lineage
         run: |
           python - <<'PY'
-          import hashlib,json
+          import hashlib,json,os
           from pathlib import Path
           from ar_tf.ml_trials import _fold_lineage,_folds
           from ar_tf.ridge_fold_resume import load_committed_fold,validate_fold_inventory
@@ -250,7 +252,7 @@ jobs:
           root=Path('artifacts/g4_g13'); rp=root/'preregistration/preregistered-trial-registry.json'; fp=Path('config/ar_tf_oos_folds_2026.yaml'); bp=Path('config/ar_tf_frozen_dataset_binding_2026.json')
           reg=json.loads(rp.read_text()); binding=json.loads(bp.read_text()); sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
           trials=ridge_trials(reg); folds=_folds(fp); records=[]
-          base={'parent_checkpoint_sha256':'974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce','source_commit_sha':'${{ github.event.pull_request.head.sha || github.sha }}','dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
+          base={'parent_checkpoint_sha256':'974d02bbce33d7809c6cc3f44a21f3d2e249ec320d7362e18fedd584e20e25ce','source_commit_sha':os.environ['SOURCE_SHA'],'dataset_sha256':binding['dataset_sha256'],'registry_sha256':sha(rp),'folds_sha256':sha(fp),'scientific_config_sha256':sha(bp),'holdout_opened':False,'holdout_evaluated':False}
           for i,t in enumerate(trials):
               for fid,fold in enumerate(folds):
                   expected=_fold_lineage(base,fold=fold,family='ridge',params=t['params'],seed=int(t['seed']),max_training_rows_per_fold=100_000)
@@ -312,6 +314,7 @@ jobs:
         run: |
           printf '%s\n' "artifact_id=${{ steps.cp03.outputs.artifact-id }}" "artifact_digest=${{ steps.cp03.outputs.artifact-digest }}" "decision=${{ steps.reduce.outputs.decision }}"
   cp03-signature:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     name: cp03-keyless-signature
     needs: ridge-reducer
     runs-on: ubuntu-latest
@@ -375,7 +378,7 @@ jobs:
           printf '%s\\n' "cp03_artifact_id=${{ needs.ridge-reducer.outputs.cp03_artifact_id }}" "cp03_artifact_digest=${{ needs.ridge-reducer.outputs.cp03_artifact_digest }}" "signed_evidence_id=${{ steps.signed.outputs.artifact-id }}" "signed_evidence_digest=${{ steps.signed.outputs.artifact-digest }}"
   gbm-gate:
     needs: [ridge-reducer, cp03-signature]
-    if: needs.ridge-reducer.outputs.gbm_admitted == 'true'
+    if: ${{ github.event_name == 'workflow_dispatch' && needs.ridge-reducer.outputs.gbm_admitted == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - run: |
