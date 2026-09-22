@@ -35,6 +35,26 @@ jobs:
           grep -q '/proc/' scripts/diagnostics/proc_memory_supervisor.py
           grep -q 'smaps_rollup' scripts/diagnostics/proc_memory_supervisor.py
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
+      - name: Verify TRIAL_ID same-step and step-boundary semantics
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/cp03-fold06-low-perturbation-memory.yml
+          grep -Fq 'TRIAL_ID="$(python - <<' "$wf"
+          grep -Fq 'test -n "$TRIAL_ID"' "$wf"
+          grep -Fq 'export TRIAL_ID' "$wf"
+          grep -Fq "printf 'TRIAL_ID=%s\\n' \"\$TRIAL_ID\" >> \"\$GITHUB_ENV\"" "$wf"
+          grep -Fq 'mkdir -p diagnostics' "$wf"
+          tmp_env="$(mktemp)"
+          TRIAL_ID="$(printf '%s\\n' 'ridge:ci-step-boundary')"
+          test -n "$TRIAL_ID"
+          export TRIAL_ID
+          printf 'TRIAL_ID=%s\\n' "$TRIAL_ID" >> "$tmp_env"
+          test "$TRIAL_ID" = 'ridge:ci-step-boundary'
+          unset TRIAL_ID
+          set -a
+          . "$tmp_env"
+          set +a
+          test "$TRIAL_ID" = 'ridge:ci-step-boundary'
       - name: Assert CI never runs scientific fold
         run: |
           set -euo pipefail
