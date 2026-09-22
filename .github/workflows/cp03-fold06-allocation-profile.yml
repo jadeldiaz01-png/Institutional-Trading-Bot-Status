@@ -111,18 +111,44 @@ jobs:
             test -s "$dest/manifest.json"; test -s "$dest/payload.json"
           done
 
-      - name: Profile original fold-06 path without modifying science
+      - name: Profile original fold-06 path with external memory sampling
         env:
           SCIENCE_ROOT: '${{ github.workspace }}/science'
         run: |
-          set -euo pipefail
-          /usr/bin/time -v python control/scripts/diagnostics/profile_cp03_fold06_allocations.py
+          set -uo pipefail
+          mkdir -p science/diagnostics
+          /usr/bin/time -v python control/scripts/diagnostics/profile_cp03_fold06_allocations.py \
+            > >(tee science/diagnostics/allocation-profile.stdout.log) \
+            2> >(tee science/diagnostics/allocation-profile.stderr.log >&2) &
+          profile_pid=$!
+          python control/scripts/diagnostics/proc_memory_supervisor.py \
+            "$profile_pid" science/diagnostics/proc-memory.csv 0.10 --stdout &
+          supervisor_pid=$!
+          set +e
+          wait "$profile_pid"
+          rc=$?
+          set -e
+          wait "$supervisor_pid" || true
+          echo "$rc" > science/diagnostics/profile-exit-code.txt
+          exit "$rc"
 
       - name: Verify diagnostic never modified tracked science
         if: always()
         working-directory: science
         run: |
+          set -euo pipefail
           git diff --exit-code
           git diff --cached --exit-code
           test ! -e artifacts/g4_g13/checkpoint-03-final.json
+          mkdir -p diagnostics
+          (cd diagnostics && sha256sum * > SHA256SUMS 2>/dev/null || true)
           echo "ALLOCATION_PROFILE_ONLY=true"
+
+      - name: Upload allocation diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cp03-fold06-allocation-profile
+          path: science/diagnostics/
+          if-no-files-found: warn
+          retention-days: 30
