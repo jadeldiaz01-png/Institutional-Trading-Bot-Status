@@ -3,8 +3,10 @@ name: Diagnostic control-plane CI
 on:
   pull_request:
     paths:
+      - '.github/workflows/cp03-fold06-allocation-profile.yml'
       - '.github/workflows/cp03-fold06-low-perturbation-memory.yml'
       - '.github/workflows/diagnostic-control-plane-ci.yml'
+      - 'scripts/diagnostics/profile_cp03_fold06_allocations.py'
       - 'scripts/diagnostics/proc_memory_supervisor.py'
       - 'scripts/diagnostics/preflight_cp03_fold06_memory.py'
 
@@ -22,18 +24,34 @@ jobs:
           python-version: '3.11'
       - name: Compile diagnostic Python
         run: |
+          python -m py_compile scripts/diagnostics/profile_cp03_fold06_allocations.py
           python -m py_compile scripts/diagnostics/proc_memory_supervisor.py
           python -m py_compile scripts/diagnostics/preflight_cp03_fold06_memory.py
       - name: Enforce diagnostic-only invariants
         run: |
           set -euo pipefail
-          wf=.github/workflows/cp03-fold06-low-perturbation-memory.yml
-          grep -q "SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'" "$wf"
-          grep -q "LOW_PERTURBATION_DIAGNOSTIC_ONLY=true" "$wf"
-          grep -q "test ! -e artifacts/g4_g13/checkpoint-03-final.json" "$wf"
-          ! grep -R -E 'sys\.settrace|tracemalloc' scripts/diagnostics/proc_memory_supervisor.py scripts/diagnostics/preflight_cp03_fold06_memory.py
-          grep -q '/proc/' scripts/diagnostics/proc_memory_supervisor.py
-          grep -q 'smaps_rollup' scripts/diagnostics/proc_memory_supervisor.py
+          low=.github/workflows/cp03-fold06-low-perturbation-memory.yml
+          alloc=.github/workflows/cp03-fold06-allocation-profile.yml
+          profile=scripts/diagnostics/profile_cp03_fold06_allocations.py
+          supervisor=scripts/diagnostics/proc_memory_supervisor.py
+          grep -q "SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'" "$low"
+          grep -q "SCIENTIFIC_SHA: '8da2171e97970c66b3ba5a237c426d9871cc23a1'" "$alloc"
+          grep -q "LOW_PERTURBATION_DIAGNOSTIC_ONLY=true" "$low"
+          grep -q "ALLOCATION_PROFILE_ONLY=true" "$alloc"
+          grep -q "test ! -e artifacts/g4_g13/checkpoint-03-final.json" "$low"
+          grep -q "test ! -e artifacts/g4_g13/checkpoint-03-final.json" "$alloc"
+          grep -q '0.10 --stdout' "$alloc"
+          grep -q 'ALLOC_TRACE' "$profile"
+          grep -q 'target.reindex' "$profile"
+          grep -q 'target.stack' "$profile"
+          grep -q 'target.rename' "$profile"
+          grep -q 'train.join' "$profile"
+          grep -q 'train.replace' "$profile"
+          grep -q 'train.dropna' "$profile"
+          ! grep -R -E 'sys\.settrace|tracemalloc' "$profile" "$supervisor" scripts/diagnostics/preflight_cp03_fold06_memory.py
+          grep -q '/proc/' "$supervisor"
+          grep -q 'smaps_rollup' "$supervisor"
+          grep -q -- '--stdout' "$supervisor"
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
       - name: Assert CI never runs scientific fold
         run: |
