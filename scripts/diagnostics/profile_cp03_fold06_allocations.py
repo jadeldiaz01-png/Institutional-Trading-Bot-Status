@@ -24,10 +24,10 @@ def describe(obj):
         except Exception: nbytes=None
     return f"type={type(obj).__name__},shape={shape},dtype={dtype},bytes={nbytes}"
 
-def mark(stage,obj=None,started_ns=None):
+def mark(stage,obj=None,started_ns=None,prefix="ALLOC_BOUNDARY"):
     elapsed=None if started_ns is None else (time.monotonic_ns()-started_ns)/1_000_000
     suffix="" if obj is None else " "+describe(obj)
-    print(f"ALLOC_BOUNDARY stage={stage} rss_kb={rss_kb()} mem_available_kb={available_kb()} elapsed_ms={elapsed}{suffix}",flush=True)
+    print(f"{prefix} stage={stage} rss_kb={rss_kb()} mem_available_kb={available_kb()} elapsed_ms={elapsed}{suffix}",flush=True)
 
 def wrap_method(cls,name,label):
     original=getattr(cls,name)
@@ -50,6 +50,8 @@ def main():
     original_long_features=ml._long_features
     original_long_training=ml._long_training_frame
 
+    trace={"phase":"idle"}
+
     def feature_panels(panel):
         mark("feature_panels.before"); started=time.monotonic_ns()
         out=original_feature_panels(panel)
@@ -64,15 +66,47 @@ def main():
     def long_features(features,dates):
         print(f"ALLOC_DATES kind=features count={len(dates)}",flush=True)
         mark("long_features.before"); started=time.monotonic_ns()
-        out=original_long_features(features,dates); mark("long_features.after",out,started); return out
+        out=original_long_features(features,dates); mark("long_features.after",out,started)
+        if trace["phase"]=="long_training":
+            trace["phase"]="target.reindex"
+        return out
+
+    def trace_method(cls,name,label,next_phase):
+        original=getattr(cls,name)
+        def wrapped(self,*args,**kwargs):
+            active=trace["phase"]==label
+            if active:
+                mark(label+".before",self,prefix="ALLOC_TRACE")
+                started=time.monotonic_ns()
+            result=original(self,*args,**kwargs)
+            if active:
+                mark(label+".after",result,started,prefix="ALLOC_TRACE")
+                trace["phase"]=next_phase
+            return result
+        setattr(cls,name,wrapped)
 
     def long_training(features,target,dates):
         print(f"ALLOC_DATES kind=training count={len(dates)}",flush=True)
         mark("long_training.before"); started=time.monotonic_ns()
-        out=original_long_training(features,target,dates); mark("long_training.after",out,started); return out
+        trace["phase"]="long_training"
+        try:
+            out=original_long_training(features,target,dates)
+            mark("long_training.after",out,started)
+            return out
+        finally:
+            print(f"ALLOC_TRACE phase_exit={trace['phase']}",flush=True)
+            trace["phase"]="idle"
 
     ml._feature_panels=feature_panels; ml._future_return=future_return
     ml._long_features=long_features; ml._long_training_frame=long_training
+
+    trace_method(pd.DataFrame,"reindex","target.reindex","target.stack")
+    trace_method(pd.DataFrame,"stack","target.stack","target.rename")
+    trace_method(pd.Series,"rename","target.rename","train.join")
+    trace_method(pd.DataFrame,"join","train.join","train.replace")
+    trace_method(pd.DataFrame,"replace","train.replace","train.dropna")
+    trace_method(pd.DataFrame,"dropna","train.dropna","complete")
+
     wrap_method(pd.DataFrame,"to_numpy","DataFrame.to_numpy")
     wrap_method(StandardScaler,"fit","StandardScaler.fit")
     wrap_method(StandardScaler,"transform","StandardScaler.transform")
