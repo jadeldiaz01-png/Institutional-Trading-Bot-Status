@@ -156,5 +156,5 @@ def test_long_training_frame_rejects_duplicate_target_keys():
     feature=pd.DataFrame([[1.0],[2.0]],index=idx,columns=["A"])
     target=pd.DataFrame([[10.0,11.0],[20.0,21.0]],index=idx,columns=["A","A"])
 
-    with pytest.raises(ValueError,match="target training index must be unique"):
+    with pytest.raises(ValueError,match="target market columns must be unique"):
         _long_training_frame({"signal":feature},target,idx)
