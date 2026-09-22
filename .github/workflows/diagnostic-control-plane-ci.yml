@@ -52,10 +52,10 @@ jobs:
           printf 'TRIAL_ID=%s\\n' "$TRIAL_ID" >> "$tmp_env"
           test "$TRIAL_ID" = 'ridge:ci-step-boundary'
           unset TRIAL_ID
-          set -a
-          . "$tmp_env"
-          set +a
-          test "$TRIAL_ID" = 'ridge:ci-step-boundary'
+          env -i PATH="$PATH" HOME="$HOME" bash -euo pipefail -c '
+            source "$1"
+            test "$TRIAL_ID" = "ridge:ci-step-boundary"
+          ' _ "$tmp_env"
       - name: Assert CI never runs scientific fold
         run: |
           set -euo pipefail
