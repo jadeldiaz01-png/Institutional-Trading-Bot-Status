@@ -32,6 +32,7 @@ def children(pid):
     return sorted(seen)
 
 root=int(sys.argv[1]); out=Path(sys.argv[2]); interval=float(sys.argv[3] if len(sys.argv)>3 else "0.25")
+emit_stdout="--stdout" in sys.argv[4:]
 fields=["timestamp_utc","monotonic_ns","pid","ppid","comm","vmrss_kb","vmhwm_kb","vmsize_kb","rssanon_kb","rssfile_kb","rssshmem_kb","smaps_rss_kb","smaps_pss_kb","private_clean_kb","private_dirty_kb","swap_kb","mem_available_kb","swap_free_kb","cpu_user_ticks","cpu_system_ticks"]
 out.parent.mkdir(parents=True,exist_ok=True)
 with out.open("w",newline="") as f:
@@ -44,6 +45,8 @@ with out.open("w",newline="") as f:
                 raw=Path(f"/proc/{pid}/stat").read_text().split()
                 row={"timestamp_utc":time.strftime("%Y-%m-%dT%H:%M:%S",time.gmtime())+f".{time.time_ns()%1_000_000_000:09d}Z","monotonic_ns":time.monotonic_ns(),"pid":pid,"ppid":raw[3],"comm":raw[1].strip("()"),"vmrss_kb":kb(st.get("VmRSS","")),"vmhwm_kb":kb(st.get("VmHWM","")),"vmsize_kb":kb(st.get("VmSize","")),"rssanon_kb":kb(st.get("RssAnon","")),"rssfile_kb":kb(st.get("RssFile","")),"rssshmem_kb":kb(st.get("RssShmem","")),"smaps_rss_kb":kb(sm.get("Rss","")),"smaps_pss_kb":kb(sm.get("Pss","")),"private_clean_kb":kb(sm.get("Private_Clean","")),"private_dirty_kb":kb(sm.get("Private_Dirty","")),"swap_kb":kb(sm.get("Swap","")),"mem_available_kb":kb(mem.get("MemAvailable","")),"swap_free_kb":kb(mem.get("SwapFree","")),"cpu_user_ticks":raw[13],"cpu_system_ticks":raw[14]}
                 w.writerow(row)
+                if emit_stdout:
+                    print("ALLOC_SAMPLE "+json.dumps(row,separators=(",",":")),flush=True)
             except (FileNotFoundError,PermissionError,ProcessLookupError,IndexError):
                 pass
         f.flush(); time.sleep(interval)
