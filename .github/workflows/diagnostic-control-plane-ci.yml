@@ -126,6 +126,37 @@ jobs:
           json.loads(start[0].split(" ",1)[1])
           for line in samples: json.loads(line.split(" ",1)[1])
           PY
+      - name: Simulate watchdog deadline and sealed evidence
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          sleep 30 &
+          observed_pid=$!
+          python scripts/diagnostics/proc_memory_supervisor.py "$observed_pid" "$tmp/proc-memory.csv" 0.05 --stdout >"$tmp/evidence-stream.log" &
+          supervisor_pid=$!
+          (
+            sleep 1
+            if kill -0 "$observed_pid" 2>/dev/null; then
+              printf 'WATCHDOG_DEADLINE seconds=1 pid=%s\\n' "$observed_pid" | tee "$tmp/watchdog.log"
+              kill -TERM "$observed_pid" 2>/dev/null || true
+            fi
+          ) &
+          watchdog_pid=$!
+          set +e; wait "$observed_pid"; rc=$?; set -e
+          kill "$watchdog_pid" 2>/dev/null || true
+          wait "$watchdog_pid" 2>/dev/null || true
+          wait "$supervisor_pid"
+          echo "$rc" > "$tmp/science-exit-code.txt"
+          test -s "$tmp/watchdog.log"
+          test -s "$tmp/proc-memory.csv"
+          (cd "$tmp" && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
+          test -s "$tmp/SHA256SUMS"
+          (cd "$tmp" && sha256sum -c SHA256SUMS)
+          grep -q '^WATCHDOG_DEADLINE ' "$tmp/watchdog.log"
+          grep -q '^ALLOC_SAMPLE ' "$tmp/evidence-stream.log"
+          grep -q 'timeout-minutes: 25' .github/workflows/cp03-fold06-low-perturbation-memory.yml
+          grep -q 'watchdog_deadline_seconds=900' .github/workflows/cp03-fold06-low-perturbation-memory.yml
+
       - name: Assert CI never runs scientific fold
         run: |
           set -euo pipefail

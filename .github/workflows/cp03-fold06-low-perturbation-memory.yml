@@ -23,7 +23,7 @@ env:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout diagnostic control plane
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -108,9 +108,28 @@ jobs:
           # incrementally captured by GitHub and remains useful if later steps cannot run.
           python ../control/scripts/diagnostics/proc_memory_supervisor.py "$science_pid" diagnostics/proc-memory.csv 0.25 --stdout &
           supervisor_pid=$!
+          # Keep a hard margin before the 25-minute GitHub job timeout so
+          # evidence can be sealed and uploaded even when fold 06 does not exit.
+          watchdog_deadline_seconds=900
+          (
+            sleep "$watchdog_deadline_seconds"
+            if kill -0 "$science_pid" 2>/dev/null; then
+              printf 'WATCHDOG_DEADLINE seconds=%s pid=%s\\n' "$watchdog_deadline_seconds" "$science_pid" | tee diagnostics/watchdog.log
+              kill -TERM "$science_pid" 2>/dev/null || true
+              sleep 5
+              kill -KILL "$science_pid" 2>/dev/null || true
+            fi
+          ) &
+          watchdog_pid=$!
           set +e; wait "$science_pid"; rc=$?; set -e
+          kill "$watchdog_pid" 2>/dev/null || true
+          wait "$watchdog_pid" 2>/dev/null || true
           wait "$supervisor_pid" || true
           echo "$rc" > diagnostics/science-exit-code.txt
+          if test -s diagnostics/watchdog.log; then
+            echo "WATCHDOG_TERMINATED=true"
+            exit 124
+          fi
           exit "$rc"
       - name: Seal diagnostic evidence
         if: always()
