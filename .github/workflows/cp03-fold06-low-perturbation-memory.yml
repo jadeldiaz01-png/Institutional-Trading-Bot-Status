@@ -64,13 +64,17 @@ jobs:
           PY
           unzip -q cp02.zip -d artifacts/g4_g13
           (cd artifacts/g4_g13 && sha256sum -c checkpoint-02.sha256)
-          python - <<'PY' >> "$GITHUB_ENV"
+          TRIAL_ID="$(python - <<'PY'
           import json,os
           from pathlib import Path
           from ar_tf.ridge_resume import trial_at
           r=json.loads(Path("artifacts/g4_g13/preregistration/preregistered-trial-registry.json").read_text())
-          print("TRIAL_ID="+str(trial_at(r,int(os.environ["TRIAL_INDEX"]))["trial_id"]))
+          print(str(trial_at(r,int(os.environ["TRIAL_INDEX"]))["trial_id"]))
           PY
+          )"
+          test -n "$TRIAL_ID"
+          export TRIAL_ID
+          printf 'TRIAL_ID=%s\n' "$TRIAL_ID" >> "$GITHUB_ENV"
           mkdir -p "artifacts/ridge_fold_checkpoints/${TRIAL_ID}"
           for fid in 00 01 02 03 04 05; do
             name="ar-tf-ridge-fold-00-${fid}"
@@ -110,9 +114,10 @@ jobs:
         working-directory: science
         run: |
           set -euo pipefail
+          mkdir -p diagnostics
           test ! -e artifacts/g4_g13/checkpoint-03-final.json
           git diff --exit-code; git diff --cached --exit-code
-          (cd diagnostics && sha256sum * > SHA256SUMS)
+          (cd diagnostics && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs -r sha256sum > SHA256SUMS)
           echo "LOW_PERTURBATION_DIAGNOSTIC_ONLY=true"
       - name: Upload diagnostic evidence
         if: always()

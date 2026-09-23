@@ -53,6 +53,33 @@ jobs:
           grep -q 'smaps_rollup' "$supervisor"
           grep -q -- '--stdout' "$supervisor"
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
+      - name: Verify TRIAL_ID same-step and step-boundary semantics
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/cp03-fold06-low-perturbation-memory.yml
+          grep -Fq 'TRIAL_ID="$(python - <<' "$wf"
+          grep -Fq 'test -n "$TRIAL_ID"' "$wf"
+          grep -Fq 'export TRIAL_ID' "$wf"
+          grep -Fq "printf 'TRIAL_ID=%s\\n' \"\$TRIAL_ID\"" "$wf"
+          grep -Fq '>> "$GITHUB_ENV"' "$wf"
+          python - <<'PY'
+          from pathlib import Path
+          text = Path(".github/workflows/cp03-fold06-low-perturbation-memory.yml").read_text()
+          seal = text.split("- name: Seal diagnostic evidence", 1)[1].split("- name: Upload diagnostic evidence", 1)[0]
+          assert "if: always()" in seal
+          assert "mkdir -p diagnostics" in seal
+          PY
+          tmp_env="$(mktemp)"
+          TRIAL_ID="$(printf '%s\n' 'ridge:ci-step-boundary')"
+          test -n "$TRIAL_ID"
+          export TRIAL_ID
+          printf 'TRIAL_ID=%s\n' "$TRIAL_ID" > "$tmp_env"
+          test "$TRIAL_ID" = 'ridge:ci-step-boundary'
+          unset TRIAL_ID
+          env -i PATH="$PATH" HOME="$HOME" bash -euo pipefail -c '
+            source "$1"
+            test "$TRIAL_ID" = "ridge:ci-step-boundary"
+          ' _ "$tmp_env"
       - name: Assert CI never runs scientific fold
         run: |
           set -euo pipefail
