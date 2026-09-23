@@ -44,12 +44,18 @@ jobs:
           grep -Fq 'export TRIAL_ID' "$wf"
           grep -Fq "printf 'TRIAL_ID=%s\\n' \"\$TRIAL_ID\"" "$wf"
           grep -Fq '>> "$GITHUB_ENV"' "$wf"
-          grep -Fq 'mkdir -p diagnostics' "$wf"
+          python - <<'PY'
+          from pathlib import Path
+          text = Path(".github/workflows/cp03-fold06-low-perturbation-memory.yml").read_text()
+          seal = text.split("- name: Seal diagnostic evidence", 1)[1].split("- name: Upload diagnostic evidence", 1)[0]
+          assert "if: always()" in seal
+          assert "mkdir -p diagnostics" in seal
+          PY
           tmp_env="$(mktemp)"
-          TRIAL_ID="$(printf '%s\\n' 'ridge:ci-step-boundary')"
+          TRIAL_ID="$(printf '%s\n' 'ridge:ci-step-boundary')"
           test -n "$TRIAL_ID"
           export TRIAL_ID
-          printf 'TRIAL_ID=%s\\n' "$TRIAL_ID" >> "$tmp_env"
+          printf 'TRIAL_ID=%s\n' "$TRIAL_ID" > "$tmp_env"
           test "$TRIAL_ID" = 'ridge:ci-step-boundary'
           unset TRIAL_ID
           env -i PATH="$PATH" HOME="$HOME" bash -euo pipefail -c '
