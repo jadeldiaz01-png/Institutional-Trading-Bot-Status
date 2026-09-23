@@ -40,17 +40,86 @@ def main() -> None:
     import ar_tf.ml_trials as ml
 
     original_training = ml._long_training_frame
+    original_reindex = pd.DataFrame.reindex
+    original_stack = pd.DataFrame.stack
+    original_join = pd.DataFrame.join
+    original_replace = pd.DataFrame.replace
+    original_dropna = pd.DataFrame.dropna
     original_features = ml._long_features
     original_to_numpy = pd.DataFrame.to_numpy
     original_fit = StandardScaler.fit
     original_transform = StandardScaler.transform
 
-    state = {"long_features_calls": 0, "to_numpy_calls": 0, "transform_calls": 0}
+    state = {
+        "long_features_calls": 0,
+        "to_numpy_calls": 0,
+        "transform_calls": 0,
+        "inside_training": False,
+        "target_reindexed": False,
+        "target_stacked": False,
+        "train_joined": False,
+        "train_replaced": False,
+        "train_dropped": False,
+    }
 
     def training(features, target, dates):
         mark("train.before")
-        out = original_training(features, target, dates)
+        state["inside_training"] = True
+        try:
+            out = original_training(features, target, dates)
+        finally:
+            state["inside_training"] = False
         mark("train.after", out)
+        return out
+
+    def reindex(self, *args, **kwargs):
+        trace = state["inside_training"] and not state["target_reindexed"]
+        if trace:
+            mark("train.target.reindex.before", self)
+        out = original_reindex(self, *args, **kwargs)
+        if trace:
+            state["target_reindexed"] = True
+            mark("train.target.reindex.after", out)
+        return out
+
+    def stack(self, *args, **kwargs):
+        trace = state["inside_training"] and state["target_reindexed"] and not state["target_stacked"]
+        if trace:
+            mark("train.target.stack.before", self)
+        out = original_stack(self, *args, **kwargs)
+        if trace:
+            state["target_stacked"] = True
+            mark("train.target.stack.after", out)
+        return out
+
+    def join(self, other, *args, **kwargs):
+        trace = state["inside_training"] and state["target_stacked"] and not state["train_joined"]
+        if trace:
+            mark("train.join.before", self)
+        out = original_join(self, other, *args, **kwargs)
+        if trace:
+            state["train_joined"] = True
+            mark("train.join.after", out)
+        return out
+
+    def replace(self, *args, **kwargs):
+        trace = state["inside_training"] and state["train_joined"] and not state["train_replaced"]
+        if trace:
+            mark("train.replace.before", self)
+        out = original_replace(self, *args, **kwargs)
+        if trace:
+            state["train_replaced"] = True
+            mark("train.replace.after", out)
+        return out
+
+    def dropna(self, *args, **kwargs):
+        trace = state["inside_training"] and state["train_replaced"] and not state["train_dropped"]
+        if trace:
+            mark("train.dropna.before", self)
+        out = original_dropna(self, *args, **kwargs)
+        if trace:
+            state["train_dropped"] = True
+            mark("train.dropna.after", out)
         return out
 
     def long_features(features, dates):
@@ -86,6 +155,11 @@ def main() -> None:
 
     ml._long_training_frame = training
     ml._long_features = long_features
+    pd.DataFrame.reindex = reindex
+    pd.DataFrame.stack = stack
+    pd.DataFrame.join = join
+    pd.DataFrame.replace = replace
+    pd.DataFrame.dropna = dropna
     pd.DataFrame.to_numpy = to_numpy
     StandardScaler.fit = scaler_fit
     StandardScaler.transform = scaler_transform
