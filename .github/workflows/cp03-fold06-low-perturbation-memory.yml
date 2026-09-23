@@ -103,7 +103,10 @@ jobs:
           mkdir -p diagnostics
           python scripts/ar_tf_ridge_fold_step.py >diagnostics/science.stdout.log 2>diagnostics/science.stderr.log &
           science_pid=$!
-          python ../control/scripts/diagnostics/proc_memory_supervisor.py "$science_pid" diagnostics/proc-memory.csv 0.25 &
+          # Stream each memory sample to the Actions log as a second evidence sink.
+          # The CSV remains the primary artifact when the runner survives; stdout is
+          # incrementally captured by GitHub and remains useful if later steps cannot run.
+          python ../control/scripts/diagnostics/proc_memory_supervisor.py "$science_pid" diagnostics/proc-memory.csv 0.25 --stdout &
           supervisor_pid=$!
           set +e; wait "$science_pid"; rc=$?; set -e
           wait "$supervisor_pid" || true

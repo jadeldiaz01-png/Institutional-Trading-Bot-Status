@@ -52,6 +52,9 @@ jobs:
           grep -q '/proc/' "$supervisor"
           grep -q 'smaps_rollup' "$supervisor"
           grep -q -- '--stdout' "$supervisor"
+          grep -Fq 'proc_memory_supervisor.py "$science_pid" diagnostics/proc-memory.csv 0.25 --stdout' "$low"
+          grep -q 'ALLOC_STREAM_START' "$supervisor"
+          grep -q 'ALLOC_SAMPLE' "$supervisor"
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
       - name: Verify TRIAL_ID same-step and step-boundary semantics
         run: |
@@ -80,6 +83,32 @@ jobs:
             source "$1"
             test "$TRIAL_ID" = "ridge:ci-step-boundary"
           ' _ "$tmp_env"
+      - name: Simulate abrupt observed-process termination
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          sleep 30 &
+          observed_pid=$!
+          python scripts/diagnostics/proc_memory_supervisor.py "$observed_pid" "$tmp/proc-memory.csv" 0.05 --stdout >"$tmp/evidence-stream.log" &
+          supervisor_pid=$!
+          sleep 0.30
+          kill -TERM "$observed_pid"
+          wait "$observed_pid" || test "$?" -eq 143
+          wait "$supervisor_pid"
+          test -s "$tmp/proc-memory.csv"
+          test "$(wc -l < "$tmp/proc-memory.csv")" -ge 2
+          grep -q '^ALLOC_STREAM_START ' "$tmp/evidence-stream.log"
+          grep -q '^ALLOC_SAMPLE ' "$tmp/evidence-stream.log"
+          python - "$tmp/evidence-stream.log" <<'PY'
+          import json,sys
+          from pathlib import Path
+          lines=Path(sys.argv[1]).read_text().splitlines()
+          start=[x for x in lines if x.startswith("ALLOC_STREAM_START ")]
+          samples=[x for x in lines if x.startswith("ALLOC_SAMPLE ")]
+          assert len(start)==1 and samples
+          json.loads(start[0].split(" ",1)[1])
+          for line in samples: json.loads(line.split(" ",1)[1])
+          PY
       - name: Assert CI never runs scientific fold
         run: |
           set -euo pipefail
