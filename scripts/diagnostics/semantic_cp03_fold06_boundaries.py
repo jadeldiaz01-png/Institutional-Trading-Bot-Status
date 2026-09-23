@@ -64,7 +64,7 @@ def main() -> None:
 
     def to_numpy(self, *args, **kwargs):
         state["to_numpy_calls"] += 1
-        label = {1: "X", 2: "y", 3: "Xtest"}.get(state["to_numpy_calls"], "to_numpy")
+        label = {1: "X", 2: "Xtest"}.get(state["to_numpy_calls"], "to_numpy")
         mark(label + ".before", self)
         out = original_to_numpy(self, *args, **kwargs)
         mark(label + ".after", out)
