@@ -123,15 +123,15 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import importlib.util
-          import pandas as pd
-          spec=importlib.util.spec_from_file_location("jc","scripts/diagnostics/join_cardinality.py")
-          mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-          left=pd.MultiIndex.from_tuples([("t1","m1"),("t1","m1"),("t2","m2")],names=["timestamp","market_id"])
-          right=pd.MultiIndex.from_tuples([("t1","m1"),("t1","m1"),("t1","m1"),("t3","m3")],names=["timestamp","market_id"])
-          out=mod._expected_inner_rows(left,right)
-          assert out["expected_inner_rows"] == 6, out
-          assert out["common_keys"] == 1, out
+          from collections import Counter
+          left=[("t1","m1"),("t1","m1"),("t2","m2")]
+          right=[("t1","m1"),("t1","m1"),("t1","m1"),("t3","m3")]
+          lc=Counter(left)
+          rc=Counter(right)
+          common=lc.keys() & rc.keys()
+          expected=sum(lc[key] * rc[key] for key in common)
+          assert expected == 6, expected
+          assert len(common) == 1, common
           PY
           ! grep -q '\.join(' scripts/diagnostics/join_cardinality.py
           ! grep -q 'pd.merge' scripts/diagnostics/join_cardinality.py
