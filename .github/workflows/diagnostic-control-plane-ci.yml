@@ -29,6 +29,7 @@ jobs:
           python -m py_compile scripts/diagnostics/proc_memory_supervisor.py
           python -m py_compile scripts/diagnostics/preflight_cp03_fold06_memory.py
           python -m py_compile scripts/diagnostics/semantic_cp03_fold06_boundaries.py
+          python -m py_compile scripts/diagnostics/join_cardinality.py
       - name: Enforce diagnostic-only invariants
         run: |
           set -euo pipefail
@@ -117,6 +118,25 @@ jobs:
           grep -q 'original_join(self, other' "$driver"
           grep -q 'original_replace(self' "$driver"
           grep -q 'original_dropna(self' "$driver"
+
+      - name: Verify non-materializing join cardinality math
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import importlib.util
+          import pandas as pd
+          spec=importlib.util.spec_from_file_location("jc","scripts/diagnostics/join_cardinality.py")
+          mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+          left=pd.MultiIndex.from_tuples([("t1","m1"),("t1","m1"),("t2","m2")],names=["timestamp","market_id"])
+          right=pd.MultiIndex.from_tuples([("t1","m1"),("t1","m1"),("t1","m1"),("t3","m3")],names=["timestamp","market_id"])
+          out=mod._expected_inner_rows(left,right)
+          assert out["expected_inner_rows"] == 6, out
+          assert out["common_keys"] == 1, out
+          PY
+          ! grep -q '\.join(' scripts/diagnostics/join_cardinality.py
+          ! grep -q 'pd.merge' scripts/diagnostics/join_cardinality.py
+          grep -q 'lc\[key\] \* rc\[key\]' scripts/diagnostics/join_cardinality.py
+          grep -q 'emit_join_cardinality(self.index, other.index)' scripts/diagnostics/semantic_cp03_fold06_boundaries.py
 
       - name: Simulate abrupt observed-process termination
         run: |
