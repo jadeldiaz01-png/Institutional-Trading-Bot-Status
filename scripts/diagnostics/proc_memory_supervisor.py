@@ -33,6 +33,8 @@ def children(pid):
 
 root=int(sys.argv[1]); out=Path(sys.argv[2]); interval=float(sys.argv[3] if len(sys.argv)>3 else "0.25")
 emit_stdout="--stdout" in sys.argv[4:]
+if emit_stdout:
+    print("ALLOC_STREAM_START "+json.dumps({"root_pid":root,"interval_seconds":interval,"sink":"github-actions-log"},separators=(",",":")),flush=True)
 fields=["timestamp_utc","monotonic_ns","pid","ppid","comm","vmrss_kb","vmhwm_kb","vmsize_kb","rssanon_kb","rssfile_kb","rssshmem_kb","smaps_rss_kb","smaps_pss_kb","private_clean_kb","private_dirty_kb","swap_kb","mem_available_kb","swap_free_kb","cpu_user_ticks","cpu_system_ticks"]
 out.parent.mkdir(parents=True,exist_ok=True)
 with out.open("w",newline="") as f:
