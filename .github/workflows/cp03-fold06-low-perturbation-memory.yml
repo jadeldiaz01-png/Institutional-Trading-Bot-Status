@@ -101,7 +101,7 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p diagnostics
-          python scripts/ar_tf_ridge_fold_step.py >diagnostics/science.stdout.log 2>diagnostics/science.stderr.log &
+          SCIENCE_ROOT="$PWD" python ../control/scripts/diagnostics/semantic_cp03_fold06_boundaries.py > >(tee diagnostics/science.stdout.log) 2>diagnostics/science.stderr.log &
           science_pid=$!
           # Stream each memory sample to the Actions log as a second evidence sink.
           # The CSV remains the primary artifact when the runner survives; stdout is
