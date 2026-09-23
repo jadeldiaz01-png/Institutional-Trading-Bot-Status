@@ -38,6 +38,7 @@ def main() -> None:
     os.chdir(science)
     sys.path.insert(0, str(science / "src"))
     import ar_tf.ml_trials as ml
+    from scripts.diagnostics.join_cardinality import emit_join_cardinality
 
     original_training = ml._long_training_frame
     original_reindex = pd.DataFrame.reindex
@@ -96,6 +97,7 @@ def main() -> None:
         trace = state["inside_training"] and state["target_stacked"] and not state["train_joined"]
         if trace:
             mark("train.join.before", self)
+            emit_join_cardinality(self.index, other.index)
         out = original_join(self, other, *args, **kwargs)
         if trace:
             state["train_joined"] = True
