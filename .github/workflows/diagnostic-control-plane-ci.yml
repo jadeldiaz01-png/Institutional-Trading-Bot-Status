@@ -149,7 +149,7 @@ jobs:
           echo "$rc" > "$tmp/science-exit-code.txt"
           test -s "$tmp/watchdog.log"
           test -s "$tmp/proc-memory.csv"
-          (cd "$tmp" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort | xargs -r sha256sum > SHA256SUMS)
+          (cd "$tmp" && find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS)
           test -s "$tmp/SHA256SUMS"
           (cd "$tmp" && sha256sum -c SHA256SUMS)
           grep -q '^WATCHDOG_DEADLINE ' "$tmp/watchdog.log"
