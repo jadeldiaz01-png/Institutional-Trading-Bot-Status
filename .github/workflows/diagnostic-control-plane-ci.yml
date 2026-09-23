@@ -100,6 +100,24 @@ jobs:
             source "$1"
             test "$TRIAL_ID" = "ridge:ci-step-boundary"
           ' _ "$tmp_env"
+      - name: Enforce inner training-boundary invariants
+        run: |
+          set -euo pipefail
+          driver=scripts/diagnostics/semantic_cp03_fold06_boundaries.py
+          for marker in             train.target.reindex.before train.target.reindex.after             train.target.stack.before train.target.stack.after             train.join.before train.join.after             train.replace.before train.replace.after             train.dropna.before train.dropna.after
+          do
+            grep -q "\"$marker\"" "$driver"
+          done
+          ! grep -q 'memory_usage' "$driver"
+          ! grep -q 'deep=True' "$driver"
+          ! grep -q 'tracemalloc' "$driver"
+          ! grep -q 'sys.settrace' "$driver"
+          grep -q 'original_reindex(self' "$driver"
+          grep -q 'original_stack(self' "$driver"
+          grep -q 'original_join(self, other' "$driver"
+          grep -q 'original_replace(self' "$driver"
+          grep -q 'original_dropna(self' "$driver"
+
       - name: Simulate abrupt observed-process termination
         run: |
           set -euo pipefail
