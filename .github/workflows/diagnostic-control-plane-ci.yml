@@ -9,6 +9,7 @@ on:
       - 'scripts/diagnostics/profile_cp03_fold06_allocations.py'
       - 'scripts/diagnostics/proc_memory_supervisor.py'
       - 'scripts/diagnostics/preflight_cp03_fold06_memory.py'
+      - 'scripts/diagnostics/semantic_cp03_fold06_boundaries.py'
 
 permissions:
   contents: read
@@ -27,6 +28,7 @@ jobs:
           python -m py_compile scripts/diagnostics/profile_cp03_fold06_allocations.py
           python -m py_compile scripts/diagnostics/proc_memory_supervisor.py
           python -m py_compile scripts/diagnostics/preflight_cp03_fold06_memory.py
+          python -m py_compile scripts/diagnostics/semantic_cp03_fold06_boundaries.py
       - name: Enforce diagnostic-only invariants
         run: |
           set -euo pipefail
@@ -56,6 +58,21 @@ jobs:
           grep -q 'ALLOC_STREAM_START' "$supervisor"
           grep -q 'ALLOC_SAMPLE' "$supervisor"
           grep -q 'upper_bound' scripts/diagnostics/preflight_cp03_fold06_memory.py
+          semantic=scripts/diagnostics/semantic_cp03_fold06_boundaries.py
+          grep -q 'SEMANTIC_BOUNDARY' "$semantic"
+          grep -q 'train.before' "$semantic"
+          grep -q 'train.after' "$semantic"
+          grep -Fq 'label = {1: "X", 2: "Xtest"}.get(state["to_numpy_calls"], "to_numpy")' "$semantic"
+          grep -Fq 'mark(label + ".before", self)' "$semantic"
+          grep -Fq 'mark(label + ".after", out)' "$semantic"
+          grep -q 'scaler.fit.before' "$semantic"
+          grep -q 'scaler.fit.after' "$semantic"
+          grep -Fq 'label = "Xs" if state["transform_calls"] == 1 else "Xts"' "$semantic"
+          grep -Fq 'mark(label + ".before", X)' "$semantic"
+          grep -Fq 'mark(label + ".after", out)' "$semantic"
+          ! grep -E 'memory_usage|copy\(|astype\(|sample\(|choice\(|max_training_rows_per_fold[[:space:]]*=' "$semantic"
+          grep -Fq 'SCIENCE_ROOT="$PWD" python ../control/scripts/diagnostics/semantic_cp03_fold06_boundaries.py' "$low"
+          grep -Fq 'runpy.run_path(str(science / "scripts/ar_tf_ridge_fold_step.py"), run_name="__main__")' "$semantic"
       - name: Verify TRIAL_ID same-step and step-boundary semantics
         run: |
           set -euo pipefail
