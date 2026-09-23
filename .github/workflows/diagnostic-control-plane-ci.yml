@@ -1,6 +1,18 @@
 name: Diagnostic control-plane CI
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/cp03-fold06-allocation-profile.yml'
+      - '.github/workflows/cp03-fold06-low-perturbation-memory.yml'
+      - '.github/workflows/diagnostic-control-plane-ci.yml'
+      - 'scripts/diagnostics/profile_cp03_fold06_allocations.py'
+      - 'scripts/diagnostics/proc_memory_supervisor.py'
+      - 'scripts/diagnostics/preflight_cp03_fold06_memory.py'
+      - 'scripts/diagnostics/semantic_cp03_fold06_boundaries.py'
+      - 'scripts/diagnostics/join_cardinality.py'
   pull_request:
     paths:
       - '.github/workflows/cp03-fold06-allocation-profile.yml'
@@ -10,6 +22,7 @@ on:
       - 'scripts/diagnostics/proc_memory_supervisor.py'
       - 'scripts/diagnostics/preflight_cp03_fold06_memory.py'
       - 'scripts/diagnostics/semantic_cp03_fold06_boundaries.py'
+      - 'scripts/diagnostics/join_cardinality.py'
 
 permissions:
   contents: read
