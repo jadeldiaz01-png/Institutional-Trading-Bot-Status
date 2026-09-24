@@ -1,0 +1,217 @@
+name: Scientific lineage keyless attestation
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scientific-lineage-attestation
+  cancel-in-progress: false
+
+env:
+  SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'
+  SOURCE_RUN_ID: '34791917236'
+  SOURCE_ARTIFACT_ID: '10329460355'
+  SOURCE_ARTIFACT_DIGEST: 'sha256:f2c0ddeecf21dd17b2bd71d162dfc1c5b497389a9a3ef46624775f41652e7f60'
+  SOURCE_CODE_SHA: 'bcfe3fbbd9892424118e84a1743a5e71a94c092d'
+  CP03_RUN_ID: '35752271068'
+  REDUCER_JOB_ID: '106833215818'
+  CP03_ARTIFACT_ID: '10706323289'
+  CP03_ARTIFACT_DIGEST: 'sha256:7315d1527381476c71f30913447cd8483db9dc984e7cb0cdc0a31e25ddeed844'
+
+jobs:
+  attest:
+    name: scientific-lineage-keyless-attestation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout attestor control plane
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
+
+      - name: Fail closed unless dispatched from default branch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main"
+          test -f scripts/attestation/scientific_lineage_attestation.py
+
+      - name: Checkout exact immutable scientific source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ env.SCIENTIFIC_SHA }}
+          path: science
+          fetch-depth: 1
+
+      - name: Verify exact scientific checkout and frozen source metadata
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: |
+          set -euo pipefail
+          test "$(git -C science rev-parse HEAD)" = "$SCIENTIFIC_SHA"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}" > source-run.json
+          test "$(jq -r .head_sha source-run.json)" = "$SOURCE_CODE_SHA"
+          test "$(jq -r .conclusion source-run.json)" = "success"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}" > source-artifact.json
+          test "$(jq -r .digest source-artifact.json)" = "$SOURCE_ARTIFACT_DIGEST"
+          test "$(jq -r .expired source-artifact.json)" = "false"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${CP03_ARTIFACT_ID}" > cp03-artifact.json
+          test "$(jq -r .digest cp03-artifact.json)" = "$CP03_ARTIFACT_DIGEST"
+          test "$(jq -r .expired cp03-artifact.json)" = "false"
+
+          gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${REDUCER_JOB_ID}" > reducer-job.json
+          test "$(jq -r .name reducer-job.json)" = "ridge-reducer"
+          test "$(jq -r .conclusion reducer-job.json)" = "success"
+
+      - name: Build canonical SCIENTIFIC-LINEAGE subject
+        run: |
+          set -euo pipefail
+          python scripts/attestation/scientific_lineage_attestation.py build \
+            --science-root science \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --attestor-commit-sha "$GITHUB_SHA" \
+            --attestor-workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --attestor-run-id "$GITHUB_RUN_ID" \
+            --attestor-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --output scientific-lineage-subject.json
+          python scripts/attestation/scientific_lineage_attestation.py verify-subject \
+            --science-root science \
+            --subject scientific-lineage-subject.json
+
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
+
+      - name: Keyless sign canonical SCIENTIFIC-LINEAGE subject
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle scientific-lineage.sigstore.json \
+            scientific-lineage-subject.json
+
+      - name: Verify exact workflow identity, OIDC issuer, and signed subject
+        env:
+          CERTIFICATE_IDENTITY: 'https://github.com/${{ github.repository }}/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main'
+          OIDC_ISSUER: 'https://token.actions.githubusercontent.com'
+        run: |
+          set -euo pipefail
+          cosign verify-blob scientific-lineage-subject.json \
+            --bundle scientific-lineage.sigstore.json \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --certificate-oidc-issuer "$OIDC_ISSUER"
+          python scripts/attestation/scientific_lineage_attestation.py emit-verification \
+            --subject scientific-lineage-subject.json \
+            --bundle scientific-lineage.sigstore.json \
+            --output scientific-lineage-verification.json \
+            --certificate-identity "$CERTIFICATE_IDENTITY" \
+            --oidc-issuer "$OIDC_ISSUER"
+          test "$(jq -r .passed scientific-lineage-verification.json)" = "true"
+          test "$(jq -r .holdout_opened scientific-lineage-verification.json)" = "false"
+          test "$(jq -r .holdout_evaluated scientific-lineage-verification.json)" = "false"
+
+      - name: Seal evidence checksum set
+        run: |
+          set -euo pipefail
+          sha256sum \
+            scientific-lineage-subject.json \
+            scientific-lineage.sigstore.json \
+            scientific-lineage-verification.json \
+            > SCIENTIFIC_LINEAGE_SHA256SUMS
+          sha256sum -c SCIENTIFIC_LINEAGE_SHA256SUMS
+
+      - name: Upload independently verifiable attestation evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: scientific-lineage-keyless-attestation
+          path: |
+            scientific-lineage-subject.json
+            scientific-lineage.sigstore.json
+            scientific-lineage-verification.json
+            SCIENTIFIC_LINEAGE_SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Persist attestation evidence to a dedicated branch
+        run: |
+          set -euo pipefail
+          evidence_dir="attestations/scientific-lineage/run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          evidence_branch="attest/scientific-lineage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          mkdir -p "$evidence_dir"
+          cp scientific-lineage-subject.json "$evidence_dir/"
+          cp scientific-lineage.sigstore.json "$evidence_dir/"
+          cp scientific-lineage-verification.json "$evidence_dir/"
+          cp SCIENTIFIC_LINEAGE_SHA256SUMS "$evidence_dir/"
+
+          python - "$evidence_dir/attestation-run.json" <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          out = {
+              "schema_version": "1.0.0",
+              "gate_id": "SCIENTIFIC_LINEAGE_ATTESTATION",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "attestor_commit_sha": os.environ["GITHUB_SHA"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "scientific_sha": os.environ["SCIENTIFIC_SHA"],
+              "holdout_opened": False,
+              "holdout_evaluated": False,
+              "paper_authorized": False,
+              "testnet_authorized": False,
+              "live_authorized": False,
+          }
+          Path(sys.argv[1]).write_text(json.dumps(out, sort_keys=True, indent=2) + "\n")
+          PY
+
+          rm -rf science
+          rm -f source-run.json source-artifact.json cp03-artifact.json reducer-job.json
+          rm -f scientific-lineage-subject.json scientific-lineage.sigstore.json scientific-lineage-verification.json SCIENTIFIC_LINEAGE_SHA256SUMS
+
+          git checkout -b "$evidence_branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$evidence_dir"
+
+          python - "$evidence_dir/" <<'PY'
+          import subprocess, sys
+          prefix = sys.argv[1]
+          files = subprocess.check_output(["git", "diff", "--cached", "--name-only"], text=True).splitlines()
+          assert files, "no attestation evidence staged"
+          assert all(path.startswith(prefix) for path in files), files
+          required = {
+              prefix + "scientific-lineage-subject.json",
+              prefix + "scientific-lineage.sigstore.json",
+              prefix + "scientific-lineage-verification.json",
+              prefix + "SCIENTIFIC_LINEAGE_SHA256SUMS",
+              prefix + "attestation-run.json",
+          }
+          assert required.issubset(set(files)), (required, files)
+          PY
+
+          git commit -m "attestation: persist SCIENTIFIC-LINEAGE run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
+          git push origin "HEAD:refs/heads/${evidence_branch}"
+
+          echo "EVIDENCE_BRANCH=${evidence_branch}"
+          echo "EVIDENCE_DIR=${evidence_dir}"
+          echo "SUBJECT_SHA256=$(jq -r .subject_sha256 "$evidence_dir/scientific-lineage-verification.json")"
+          echo "BUNDLE_SHA256=$(jq -r .sigstore_bundle_sha256 "$evidence_dir/scientific-lineage-verification.json")"
+
+      - name: Assert no execution authority was introduced
+        run: |
+          set -euo pipefail
+          test "$SCIENTIFIC_SHA" = "68ab70b0a531b86b1a02db0e404aa69a5a088b95"
+          test "$CP03_RUN_ID" = "35752271068"
+          echo "HOLDOUT_OPENED=false"
+          echo "PAPER_AUTHORIZED=false"
+          echo "TESTNET_AUTHORIZED=false"
+          echo "LIVE_AUTHORIZED=false"

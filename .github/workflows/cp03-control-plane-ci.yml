@@ -4,7 +4,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/ar-tf-g4-g13-checkpointed.yml'
+      - '.github/workflows/scientific-lineage-attestation.yml'
       - '.github/workflows/cp03-control-plane-ci.yml'
+      - 'scripts/attestation/scientific_lineage_attestation.py'
 
 permissions:
   contents: read
@@ -92,3 +94,92 @@ jobs:
         run: |
           set -euo pipefail
           ! grep -E '^[[:space:]]*python[[:space:]].*ar_tf_ridge_fold_step\.py([[:space:]]|$)' .github/workflows/cp03-control-plane-ci.yml
+
+      - name: Validate independent SCIENTIFIC-LINEAGE attestation contract
+        run: |
+          set -euo pipefail
+          att=.github/workflows/scientific-lineage-attestation.yml
+          script=scripts/attestation/scientific_lineage_attestation.py
+
+          python -m py_compile "$script"
+          grep -Fq 'workflow_dispatch:' "$att"
+          grep -Fq "SCIENTIFIC_SHA: '${NEW_SCIENTIFIC_SHA}'" "$att"
+          grep -Fq 'contents: write' "$att"
+          grep -Fq 'actions: read' "$att"
+          grep -Fq 'id-token: write' "$att"
+          grep -Fq 'test "$GITHUB_REF" = "refs/heads/main"' "$att"
+          grep -Fq 'scientific-lineage-attestation.yml@refs/heads/main' "$att"
+          test "$(grep -Fc 'actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0' "$att")" -eq 2
+          grep -Fq 'sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62' "$att"
+          grep -Fq 'actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4' "$att"
+          grep -Fq 'cosign sign-blob --yes' "$att"
+          grep -Fq 'cosign verify-blob scientific-lineage-subject.json' "$att"
+          grep -Fq -- '--certificate-identity "$CERTIFICATE_IDENTITY"' "$att"
+          grep -Fq -- '--certificate-oidc-issuer "$OIDC_ISSUER"' "$att"
+          grep -Fq 'attestations/scientific-lineage/run-' "$att"
+          grep -Fq 'git push origin "HEAD:refs/heads/${evidence_branch}"' "$att"
+          ! grep -Fq 'pull-requests: write' "$att"
+          ! grep -Fq 'gh pr create' "$att"
+          ! grep -Eq '^[[:space:]]+(push|pull_request|schedule):' "$att"
+
+      - name: Exercise SCIENTIFIC-LINEAGE subject builder and negative cases
+        run: |
+          set -euo pipefail
+          root="$(mktemp -d)"
+          mkdir -p "$root/science/config" "$root/science/src/ar_tf"
+
+          git show "${NEW_SCIENTIFIC_SHA}:config/ar_tf_frozen_dataset_binding_2026.json" > "$root/science/config/ar_tf_frozen_dataset_binding_2026.json"
+          git show "${NEW_SCIENTIFIC_SHA}:config/ar_tf_oos_folds_2026.yaml" > "$root/science/config/ar_tf_oos_folds_2026.yaml"
+          git show "${NEW_SCIENTIFIC_SHA}:config/ar_tf_master_strategy_tournament_2026.yaml" > "$root/science/config/ar_tf_master_strategy_tournament_2026.yaml"
+          git show "${NEW_SCIENTIFIC_SHA}:src/ar_tf/slsa_provenance.py" > "$root/science/src/ar_tf/slsa_provenance.py"
+
+          python scripts/attestation/scientific_lineage_attestation.py build \
+            --science-root "$root/science" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --attestor-commit-sha "$GITHUB_SHA" \
+            --attestor-workflow-ref "$GITHUB_REPOSITORY/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main" \
+            --attestor-run-id 1 \
+            --attestor-run-attempt 1 \
+            --output "$root/subject.json"
+
+          python scripts/attestation/scientific_lineage_attestation.py verify-subject \
+            --science-root "$root/science" \
+            --subject "$root/subject.json"
+
+          cp "$root/subject.json" "$root/tampered-subject.json"
+          python - "$root/tampered-subject.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          value=json.loads(p.read_text())
+          value["scientific_sha"]="0"*40
+          p.write_text(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")
+          PY
+          if python scripts/attestation/scientific_lineage_attestation.py verify-subject \
+              --science-root "$root/science" --subject "$root/tampered-subject.json"; then
+            echo "tampered subject was incorrectly accepted" >&2
+            exit 1
+          fi
+
+          cp -a "$root/science" "$root/science-bad"
+          python - "$root/science-bad/config/ar_tf_frozen_dataset_binding_2026.json" <<'PY'
+          import json,sys
+          from pathlib import Path
+          p=Path(sys.argv[1])
+          value=json.loads(p.read_text())
+          value["holdout_evaluated"]=True
+          p.write_text(json.dumps(value,sort_keys=True,indent=2)+"\n")
+          PY
+          if python scripts/attestation/scientific_lineage_attestation.py build \
+              --science-root "$root/science-bad" \
+              --source-repository "$GITHUB_REPOSITORY" \
+              --attestor-commit-sha "$GITHUB_SHA" \
+              --attestor-workflow-ref "$GITHUB_REPOSITORY/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main" \
+              --attestor-run-id 1 \
+              --attestor-run-attempt 1 \
+              --output "$root/bad-subject.json"; then
+            echo "holdout-evaluated binding was incorrectly accepted" >&2
+            exit 1
+          fi
+
+          echo "SCIENTIFIC_LINEAGE_ATTESTATION_NEGATIVE_TESTS=PASS"
