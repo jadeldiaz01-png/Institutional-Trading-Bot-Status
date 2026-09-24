@@ -25,6 +25,26 @@ env:
   SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'
   SOURCE_SHA: ${{ github.event_name == 'workflow_dispatch' && '68ab70b0a531b86b1a02db0e404aa69a5a088b95' || github.event.pull_request.head.sha }}
 jobs:
+  cp03-digest-contract:
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify CP03 artifact digest normalization contract
+        run: |
+          set -euo pipefail
+          normalize_digest() {
+            local digest="$1"
+            case "$digest" in
+              sha256:[0-9a-fA-F][0-9a-fA-F]*) printf '%s\\n' "$digest" ;;
+              [0-9a-fA-F][0-9a-fA-F]*) printf 'sha256:%s\\n' "$digest" ;;
+              *) return 1 ;;
+            esac
+          }
+          hex='802f82a63b0cda9b4f397fb545e3325cac37dae7772e735164057203389e5d1e'
+          test "$(normalize_digest "$hex")" = "sha256:$hex"
+          test "$(normalize_digest "sha256:$hex")" = "sha256:$hex"
+          ! normalize_digest 'md5:deadbeef'
+          ! normalize_digest ''
   ridge-trials:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     name: ridge-trial-${{ matrix.index }}
@@ -331,11 +351,17 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          case "$EXPECTED_DIGEST" in
+            sha256:[0-9a-fA-F][0-9a-fA-F]*) EXPECTED_DIGEST_CANONICAL="$EXPECTED_DIGEST" ;;
+            [0-9a-fA-F][0-9a-fA-F]*) EXPECTED_DIGEST_CANONICAL="sha256:$EXPECTED_DIGEST" ;;
+            *) echo "invalid artifact digest format" >&2; exit 1 ;;
+          esac
+          test "${#EXPECTED_DIGEST_CANONICAL}" -eq 71
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
-          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST_CANONICAL"
           test "$(jq -r .expired cp03-meta.json)" = false
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
-          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST_CANONICAL"
       - name: Install pinned Cosign
         uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
       - name: Keyless sign exact CP03 GitHub artifact bytes
