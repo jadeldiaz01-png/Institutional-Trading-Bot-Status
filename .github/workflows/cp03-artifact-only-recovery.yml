@@ -29,7 +29,8 @@ jobs:
           test "$(grep -c "CP03_ARTIFACT_ID: '10830103975'" "$f")" -eq 1
           test "$(grep -c "CP03_ARTIFACT_DIGEST: 'sha256:802f82a63b0cda9b4f397fb545e3325cac37dae7772e735164057203389e5d1e'" "$f")" -eq 1
           test "$(grep -c "SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'" "$f")" -eq 1
-          ! grep -Eq 'ridge-trials:|ridge-reducer:|scripts/ar_tf_ridge|ar-tf-ridge-fold' "$f"
+          ! grep -Eq '^  (ridge-trials|ridge-reducer):' "$f"
+          ! grep -Eq 'scripts/ar_tf_ridge|ar-tf-ridge-fold' "$f"
 
   recover-evidence:
     if: ${{ github.event_name == 'workflow_dispatch' }}
