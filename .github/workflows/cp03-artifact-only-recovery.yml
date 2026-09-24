@@ -25,16 +25,29 @@ jobs:
       - name: Assert artifact-only recovery contract
         run: |
           set -euo pipefail
-          f=.github/workflows/cp03-artifact-only-recovery.yml
-          test "$(grep -c "CP03_ARTIFACT_ID: '10830103975'" "$f")" -eq 1
-          test "$(grep -c "CP03_ARTIFACT_DIGEST: 'sha256:802f82a63b0cda9b4f397fb545e3325cac37dae7772e735164057203389e5d1e'" "$f")" -eq 1
-          test "$(grep -c "SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'" "$f")" -eq 1
           ruby -e '
             require "yaml"
-            doc = YAML.load_file(".github/workflows/cp03-artifact-only-recovery.yml")
-            jobs = (doc["jobs"] || {}).keys.map(&:to_s).sort
+            path = ".github/workflows/cp03-artifact-only-recovery.yml"
+            doc = YAML.load_file(path)
+            puts "PSYCH_TOP_LEVEL=#{doc.keys.map { |k| [k.class.name, k.inspect] }.inspect}"
+            jobs_obj = doc["jobs"]
+            puts "PSYCH_JOBS_CLASS=#{jobs_obj.class.name}"
+            puts "PSYCH_JOB_KEYS=#{(jobs_obj || {}).keys.map { |k| [k.class.name, k.inspect] }.inspect}"
+            abort("jobs mapping missing") unless jobs_obj.is_a?(Hash)
+            jobs = jobs_obj.keys.map(&:to_s).sort
             allowed = ["contract", "recover-evidence"].sort
             abort("unexpected job set: #{jobs.inspect}") unless jobs == allowed
+            env = doc["env"]
+            abort("env mapping missing") unless env.is_a?(Hash)
+            expected = {
+              "CP03_ARTIFACT_ID" => "10830103975",
+              "CP03_ARTIFACT_DIGEST" => "sha256:802f82a63b0cda9b4f397fb545e3325cac37dae7772e735164057203389e5d1e",
+              "SCIENTIFIC_SHA" => "68ab70b0a531b86b1a02db0e404aa69a5a088b95"
+            }
+            expected.each do |key, value|
+              actual = env[key].to_s
+              abort("#{key} mismatch") unless actual == value
+            end
           '
 
   recover-evidence:
