@@ -31,8 +31,8 @@ jobs:
           test "$(grep -c "SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'" "$f")" -eq 1
           ruby -e '
             require "yaml"
-            doc = YAML.safe_load_file(".github/workflows/cp03-artifact-only-recovery.yml", aliases: true)
-            jobs = (doc["jobs"] || {}).keys.sort
+            doc = YAML.load_file(".github/workflows/cp03-artifact-only-recovery.yml")
+            jobs = (doc["jobs"] || {}).keys.map(&:to_s).sort
             allowed = ["contract", "recover-evidence"].sort
             abort("unexpected job set: #{jobs.inspect}") unless jobs == allowed
           '
