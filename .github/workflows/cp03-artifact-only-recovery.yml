@@ -31,14 +31,12 @@ jobs:
           test "$(grep -c "SCIENTIFIC_SHA: '68ab70b0a531b86b1a02db0e404aa69a5a088b95'" "$f")" -eq 1
           python - <<'PY'
           from pathlib import Path
-          text=Path('.github/workflows/cp03-artifact-only-recovery.yml').read_text()
-          jobs=text.split('jobs:',1)[1]
-          forbidden_job_keys=('ridge-'+'trials:', 'ridge-'+'reducer:')
-          forbidden_exec=('scripts/ar_tf_'+'ridge', 'ar-tf-ridge-'+'fold')
-          if any(('  '+x) in jobs for x in forbidden_job_keys):
-              raise SystemExit('forbidden Ridge job key')
-          if any(x in text for x in forbidden_exec):
-              raise SystemExit('forbidden Ridge execution reference')
+          import yaml
+          doc=yaml.safe_load(Path('.github/workflows/cp03-artifact-only-recovery.yml').read_text())
+          job_names=set((doc.get('jobs') or {}).keys())
+          allowed={'contract','recover-evidence'}
+          if job_names != allowed:
+              raise SystemExit(f'unexpected job set: {sorted(job_names)}')
           PY
 
   recover-evidence:
