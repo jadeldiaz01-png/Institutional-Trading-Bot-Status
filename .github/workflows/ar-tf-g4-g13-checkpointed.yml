@@ -331,11 +331,22 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
+          normalize_sha256() {
+            local digest="${1#sha256:}"
+            [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]] || {
+              echo "invalid sha256 digest format" >&2
+              return 1
+            }
+            printf '%s\n' "${digest,,}"
+          }
+          expected_digest="$(normalize_sha256 "$EXPECTED_DIGEST")"
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
-          test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST"
+          metadata_digest="$(normalize_sha256 "$(jq -r .digest cp03-meta.json)")"
+          test "$metadata_digest" = "$expected_digest"
           test "$(jq -r .expired cp03-meta.json)" = false
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > cp03.zip
-          test "sha256:$(sha256sum cp03.zip | cut -d' ' -f1)" = "$EXPECTED_DIGEST"
+          downloaded_digest="$(normalize_sha256 "$(sha256sum cp03.zip | cut -d' ' -f1)")"
+          test "$downloaded_digest" = "$expected_digest"
       - name: Install pinned Cosign
         uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62
       - name: Keyless sign exact CP03 GitHub artifact bytes
