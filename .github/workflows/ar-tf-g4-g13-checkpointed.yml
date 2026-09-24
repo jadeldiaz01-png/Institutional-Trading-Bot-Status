@@ -35,9 +35,9 @@ jobs:
           normalize_digest() {
             local digest="$1"
             if [[ "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
-              printf '%s\\n' "$digest"
+              echo "$digest"
             elif [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]]; then
-              printf 'sha256:%s\\n' "$digest"
+              echo "sha256:$digest"
             else
               return 1
             fi
