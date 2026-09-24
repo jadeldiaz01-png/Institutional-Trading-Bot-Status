@@ -34,17 +34,21 @@ jobs:
           set -euo pipefail
           normalize_digest() {
             local digest="$1"
-            case "$digest" in
-              sha256:[0-9a-fA-F][0-9a-fA-F]*) printf '%s\\n' "$digest" ;;
-              [0-9a-fA-F][0-9a-fA-F]*) printf 'sha256:%s\\n' "$digest" ;;
-              *) return 1 ;;
-            esac
+            if [[ "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+              printf '%s\\n' "$digest"
+            elif [[ "$digest" =~ ^[0-9a-fA-F]{64}$ ]]; then
+              printf 'sha256:%s\\n' "$digest"
+            else
+              return 1
+            fi
           }
           hex='802f82a63b0cda9b4f397fb545e3325cac37dae7772e735164057203389e5d1e'
           test "$(normalize_digest "$hex")" = "sha256:$hex"
           test "$(normalize_digest "sha256:$hex")" = "sha256:$hex"
           ! normalize_digest 'md5:deadbeef'
           ! normalize_digest ''
+          ! normalize_digest "${hex%?}g"
+          ! normalize_digest "${hex}00"
   ridge-trials:
     if: ${{ github.event_name == 'workflow_dispatch' }}
     name: ridge-trial-${{ matrix.index }}
@@ -351,12 +355,14 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$ARTIFACT_ID"; test -n "$EXPECTED_DIGEST"
-          case "$EXPECTED_DIGEST" in
-            sha256:[0-9a-fA-F][0-9a-fA-F]*) EXPECTED_DIGEST_CANONICAL="$EXPECTED_DIGEST" ;;
-            [0-9a-fA-F][0-9a-fA-F]*) EXPECTED_DIGEST_CANONICAL="sha256:$EXPECTED_DIGEST" ;;
-            *) echo "invalid artifact digest format" >&2; exit 1 ;;
-          esac
-          test "${#EXPECTED_DIGEST_CANONICAL}" -eq 71
+          if [[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            EXPECTED_DIGEST_CANONICAL="$EXPECTED_DIGEST"
+          elif [[ "$EXPECTED_DIGEST" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            EXPECTED_DIGEST_CANONICAL="sha256:$EXPECTED_DIGEST"
+          else
+            echo "invalid artifact digest format" >&2
+            exit 1
+          fi
           gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}" > cp03-meta.json
           test "$(jq -r .digest cp03-meta.json)" = "$EXPECTED_DIGEST_CANONICAL"
           test "$(jq -r .expired cp03-meta.json)" = false
