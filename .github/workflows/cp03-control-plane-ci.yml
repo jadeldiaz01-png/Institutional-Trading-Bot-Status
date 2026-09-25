@@ -103,6 +103,10 @@ jobs:
 
           python -m py_compile "$script"
           grep -Fq 'workflow_dispatch:' "$att"
+          grep -Fq 'expected_sha:' "$att"
+          grep -Fq 'EXPECTED_SHA: ${{ inputs.expected_sha }}' "$att"
+          grep -Fq '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' "$att"
+          grep -Fq 'test "$GITHUB_SHA" = "$EXPECTED_SHA"' "$att"
           grep -Fq "SCIENTIFIC_SHA: '${NEW_SCIENTIFIC_SHA}'" "$att"
           grep -Fq 'contents: write' "$att"
           grep -Fq 'actions: read' "$att"
