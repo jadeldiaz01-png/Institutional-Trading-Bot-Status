@@ -2,6 +2,11 @@ name: Scientific lineage keyless attestation
 
 on:
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact lowercase 40-hex main SHA authorized for this attestation
+        required: true
+        type: string
 
 permissions: {}
 
@@ -35,10 +40,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Fail closed unless dispatched from default branch
+      - name: Fail closed unless dispatched from default branch and exact authorized SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main"
           test -f scripts/attestation/scientific_lineage_attestation.py
