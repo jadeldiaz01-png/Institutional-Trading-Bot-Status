@@ -103,6 +103,16 @@ jobs:
 
           python -m py_compile "$script"
           grep -Fq 'workflow_dispatch:' "$att"
+          grep -Fq 'expected_sha:' "$att"
+          python - "$att" <<'PY'
+          from pathlib import Path
+          import sys
+          text = Path(sys.argv[1]).read_text()
+          needle = "EXPECTED_SHA: " + "$" + "{{ inputs.expected_sha }}"
+          assert needle in text, "attestation must bind EXPECTED_SHA to workflow_dispatch input"
+          PY
+          grep -Fq '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' "$att"
+          grep -Fq 'test "$GITHUB_SHA" = "$EXPECTED_SHA"' "$att"
           grep -Fq "SCIENTIFIC_SHA: '${NEW_SCIENTIFIC_SHA}'" "$att"
           grep -Fq 'contents: write' "$att"
           grep -Fq 'actions: read' "$att"
