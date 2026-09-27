@@ -1,0 +1,15 @@
+{
+  "attestor_commit_sha": "7aa7aba75b1007b3f8fb672dc6f06e2df1436724",
+  "gate_id": "SCIENTIFIC_LINEAGE_ATTESTATION",
+  "holdout_evaluated": false,
+  "holdout_opened": false,
+  "live_authorized": false,
+  "paper_authorized": false,
+  "repository": "jadeldiaz01-png/Institutional-Trading-Bot-Status",
+  "run_attempt": "1",
+  "run_id": "36284096617",
+  "schema_version": "1.0.0",
+  "scientific_sha": "68ab70b0a531b86b1a02db0e404aa69a5a088b95",
+  "testnet_authorized": false,
+  "workflow_ref": "jadeldiaz01-png/Institutional-Trading-Bot-Status/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main"
+}

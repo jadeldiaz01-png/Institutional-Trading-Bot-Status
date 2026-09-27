@@ -1,0 +1,22 @@
+{
+  "attestor_commit_sha": "7aa7aba75b1007b3f8fb672dc6f06e2df1436724",
+  "attestor_run_attempt": "1",
+  "attestor_run_id": "36284096617",
+  "attestor_workflow_ref": "jadeldiaz01-png/Institutional-Trading-Bot-Status/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main",
+  "certificate_identity": "https://github.com/jadeldiaz01-png/Institutional-Trading-Bot-Status/.github/workflows/scientific-lineage-attestation.yml@refs/heads/main",
+  "cp03_artifact_digest": "sha256:7315d1527381476c71f30913447cd8483db9dc984e7cb0cdc0a31e25ddeed844",
+  "dataset_sha256": "d1686e5fba9524c78e8a0e9a90d0f38efc1c6b883ebf1389dd4b47bb2984aaae",
+  "gate_id": "SCIENTIFIC_LINEAGE_ATTESTATION",
+  "holdout_evaluated": false,
+  "holdout_opened": false,
+  "live_authorized": false,
+  "oidc_issuer": "https://token.actions.githubusercontent.com",
+  "paper_authorized": false,
+  "passed": true,
+  "schema_version": "1.0.0",
+  "scientific_sha": "68ab70b0a531b86b1a02db0e404aa69a5a088b95",
+  "sigstore_bundle_sha256": "38f67de7389ad0292dcac176bd497d2ea579a699bf14aa45d93c70e9645e43e8",
+  "source_artifact_digest": "sha256:f2c0ddeecf21dd17b2bd71d162dfc1c5b497389a9a3ef46624775f41652e7f60",
+  "subject_sha256": "fb1d308dcead7a8e5bebe2a3841e89b7babc4b42854f6f4701644f493ff747e5",
+  "testnet_authorized": false
+}
