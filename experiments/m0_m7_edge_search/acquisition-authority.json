@@ -1,0 +1,35 @@
+{
+  "authorized_origin_main_sha": "b30d39d75a73b6cd001e5f2f007283c05ca2c669",
+  "cadence": "daily_03_17_utc",
+  "contract_id": "M0_M7_PUBLIC_DATA_ACQUISITION_2026",
+  "funding_policy": {
+    "daily_archive_expected": false,
+    "monthly_archive_may_be_added_later_under_separate_change": true,
+    "synthetic_substitution_forbidden": true
+  },
+  "mode": "RESEARCH_ONLY",
+  "safety": {
+    "EDGE_VERIFIED": false,
+    "account_access_allowed": false,
+    "capital_movement_allowed": false,
+    "credentials_allowed": false,
+    "holdout_access_allowed": false,
+    "live_authorized": false,
+    "orders_allowed": false,
+    "paper_authorized": false,
+    "testnet_authorized": false
+  },
+  "schema_version": "1.0.0",
+  "sources": {
+    "binance_data_vision": [
+      "spot_klines",
+      "coinm_klines",
+      "coinm_metrics"
+    ],
+    "coinmetrics_community": [
+      "AdrActCnt",
+      "TxCnt",
+      "FeeTotNtv"
+    ]
+  }
+}
