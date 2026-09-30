@@ -10,6 +10,13 @@
     "SOLUSDT",
     "XRPUSDT"
   ],
+  "data_quality": {
+    "duplicate_keys": false,
+    "hourly_continuity_ok": true,
+    "max_gap_hours": 1.0,
+    "stable_asset_universe": true,
+    "target_strictly_after_decision": true
+  },
   "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
   "decision_timestamps": 23,
   "mode": "RESEARCH_ONLY",
