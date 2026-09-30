@@ -11,6 +11,13 @@
     "SOLUSDT",
     "XRPUSDT"
   ],
+  "data_quality": {
+    "duplicate_keys": false,
+    "hourly_continuity_ok": true,
+    "max_gap_hours": 1.0,
+    "stable_asset_universe": true,
+    "target_strictly_after_decision": true
+  },
   "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
   "decision_timestamps": 23,
   "feature_availability": {
@@ -117,6 +124,6 @@
   "minimum_timestamps_for_first_fold": 313,
   "mode": "RESEARCH_ONLY",
   "paper_authorized": false,
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "testnet_authorized": false
 }

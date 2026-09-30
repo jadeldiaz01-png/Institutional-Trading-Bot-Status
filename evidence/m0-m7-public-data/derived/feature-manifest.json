@@ -23,7 +23,7 @@
     "onchain_availability": "daily metric usable no earlier than metric_day_plus_1d"
   },
   "readiness_path": "/tmp/m0m7-derived/readiness.json",
-  "readiness_sha256": "e89d7b8d3baf975358215e016729f6dda959ee33949581fbbd7b07e936abbd63",
+  "readiness_sha256": "7e23c8b93a62a2d7c1599f8e52b297b9d7f6d2dbda7d6106b816437b5b6caf73",
   "row_count": 184,
   "safety": {
     "EDGE_VERIFIED": false,
