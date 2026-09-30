@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/m0-m7-public-data-acquisition.yml'
       - 'experiments/m0_m7_edge_search/acquisition-authority.json'
+      - 'src/edge_lab/feature_pipeline.py'
+      - 'scripts/build_m0_m7_point_in_time.py'
   workflow_dispatch:
     inputs:
       expected_origin_main_sha:
@@ -22,14 +24,16 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AUTHORIZED_BASE_SHA: 'b30d39d75a73b6cd001e5f2f007283c05ca2c669'
-  AUTHORITY_CONTRACT_SHA256: '5dc144737ca245eacabe3ac02f42882640aaaaa3e74ea85d7aaf86b06adf5961'
+  AUTHORIZED_ORIGIN_SHA: 'b30d39d75a73b6cd001e5f2f007283c05ca2c669'
+  IMPLEMENTATION_BASE_SHA: 'a0483cc6a59bebec7fcedc1db2b232ab85eceade'
+  AUTHORITY_CONTRACT_SHA256: 'e4810ef93cb73b56835fd1e271f87e69e2ace418fa632094092f697c01c290b1'
+  LEDGER_BRANCH: 'evidence/m0-m7-public-data-ledger'
 
 jobs:
   acquire:
     name: public-readonly-acquisition
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout acquisition code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
@@ -60,7 +64,10 @@ jobs:
 
           contract = json.loads(Path("experiments/m0_m7_edge_search/acquisition-authority.json").read_text())
           assert contract["authorized_origin_main_sha"] == "b30d39d75a73b6cd001e5f2f007283c05ca2c669"
+          assert contract["implementation_base_sha"] == "a0483cc6a59bebec7fcedc1db2b232ab85eceade"
           assert contract["mode"] == "RESEARCH_ONLY"
+          assert len(contract["universe"]["spot_symbols"]) >= 2
+          assert contract["universe"]["benchmark_symbol"] in contract["universe"]["spot_symbols"]
           s = contract["safety"]
           assert s["EDGE_VERIFIED"] is False
           assert s["credentials_allowed"] is False
@@ -74,12 +81,12 @@ jobs:
           print("RESEARCH_ONLY_AUTHORITY=PASS")
           PY
 
-          event="${GITHUB_EVENT_NAME}"
+          event="$GITHUB_EVENT_NAME"
           if [ "$event" = "workflow_dispatch" ]; then
-            test "$EXPECTED_ORIGIN_MAIN_SHA" = "$AUTHORIZED_BASE_SHA"
+            test "$EXPECTED_ORIGIN_MAIN_SHA" = "$AUTHORIZED_ORIGIN_SHA"
             test "$GITHUB_REF" = "refs/heads/main"
           elif [ "$event" = "pull_request" ]; then
-            test "${{ github.event.pull_request.base.sha }}" = "$AUTHORIZED_BASE_SHA"
+            test "${{ github.event.pull_request.base.sha }}" = "$IMPLEMENTATION_BASE_SHA"
           elif [ "$event" = "schedule" ]; then
             test "$GITHUB_REF" = "refs/heads/main"
           else
@@ -92,12 +99,12 @@ jobs:
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          mkdir -p evidence/m0-m7-public-data
+          rm -rf run-evidence
+          mkdir -p run-evidence
 
           python3 - <<'PY'
           from __future__ import annotations
 
-          import csv
           import hashlib
           import io
           import json
@@ -108,16 +115,14 @@ jobs:
           from pathlib import Path
           from urllib.parse import urlencode, urlparse
 
-          OUT = Path("evidence/m0-m7-public-data")
-          OUT.mkdir(parents=True, exist_ok=True)
+          OUT = Path("run-evidence")
           fetched_at = datetime.now(timezone.utc)
-          # Binance public daily archives are published the next day, so use the
-          # latest complete UTC day and fail over one more day if publication lags.
           candidate_days = [
               (fetched_at.date() - timedelta(days=1)).isoformat(),
               (fetched_at.date() - timedelta(days=2)).isoformat(),
           ]
-
+          contract = json.loads(Path("experiments/m0_m7_edge_search/acquisition-authority.json").read_text())
+          spot_symbols = contract["universe"]["spot_symbols"]
           allowed_hosts = {"data.binance.vision", "community-api.coinmetrics.io"}
 
           def get_bytes(url: str, timeout: float = 30.0) -> bytes:
@@ -128,7 +133,7 @@ jobs:
                   url,
                   headers={
                       "Accept": "*/*",
-                      "User-Agent": "institutional-trading-bot-status-edge-lab/1.0",
+                      "User-Agent": "institutional-trading-bot-status-edge-lab/2.0",
                   },
                   method="GET",
               )
@@ -147,13 +152,10 @@ jobs:
                   try:
                       zip_bytes = get_bytes(url)
                       checksum_bytes = get_bytes(url + ".CHECKSUM")
-                      checksum_text = checksum_bytes.decode("utf-8").strip()
-                      expected = checksum_text.split()[0].lower()
+                      expected = checksum_bytes.decode("utf-8").strip().split()[0].lower()
                       actual = sha256(zip_bytes)
                       if len(expected) != 64 or expected != actual:
-                          raise RuntimeError(
-                              f"checksum mismatch expected={expected} actual={actual}"
-                          )
+                          raise RuntimeError(f"checksum mismatch expected={expected} actual={actual}")
                       with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
                           names = archive.namelist()
                           if len(names) != 1:
@@ -163,19 +165,14 @@ jobs:
                       if not lines:
                           raise RuntimeError("empty extracted CSV")
 
-                      zip_path = OUT / f"{kind}-{day}.zip"
-                      csv_path = OUT / f"{kind}-{day}.csv"
-                      checksum_path = OUT / f"{kind}-{day}.CHECKSUM"
-                      zip_path.write_bytes(zip_bytes)
-                      csv_path.write_bytes(csv_bytes)
-                      checksum_path.write_bytes(checksum_bytes)
+                      (OUT / f"{kind}-{day}.zip").write_bytes(zip_bytes)
+                      (OUT / f"{kind}-{day}.csv").write_bytes(csv_bytes)
+                      (OUT / f"{kind}-{day}.CHECKSUM").write_bytes(checksum_bytes)
                       return {
                           "kind": kind,
                           "date": day,
                           "url": url,
-                          "zip_path": str(zip_path),
                           "zip_sha256": actual,
-                          "csv_path": str(csv_path),
                           "csv_sha256": sha256(csv_bytes),
                           "line_count": len(lines),
                           "binance_checksum_verified": True,
@@ -184,13 +181,16 @@ jobs:
                       errors.append({"date": day, "error": str(exc)})
               raise RuntimeError(f"{kind} unavailable for candidate days: {errors}")
 
-          spot = download_binance_archive(
-              "spot-klines-BTCUSDT-1h",
-              lambda day: (
-                  "https://data.binance.vision/data/spot/daily/klines/"
-                  f"BTCUSDT/1h/BTCUSDT-1h-{day}.zip"
-              ),
-          )
+          spot_sources = {}
+          for symbol in spot_symbols:
+              spot_sources[symbol] = download_binance_archive(
+                  f"spot-klines-{symbol}-1h",
+                  lambda day, symbol=symbol: (
+                      "https://data.binance.vision/data/spot/daily/klines/"
+                      f"{symbol}/1h/{symbol}-1h-{day}.zip"
+                  ),
+              )
+
           derivatives_klines = download_binance_archive(
               "coinm-klines-BTCUSD_PERP-1h",
               lambda day: (
@@ -226,27 +226,31 @@ jobs:
           rows = onchain.get("data", [])
           if not rows:
               raise RuntimeError("Coin Metrics Community API returned no rows")
-          onchain_path = OUT / "coinmetrics-btc-onchain.json"
+          onchain_path = OUT / f"coinmetrics-btc-onchain-{fetched_at.date().isoformat()}.json"
           onchain_path.write_bytes(onchain_bytes)
 
+          run_id = os.environ["GITHUB_RUN_ID"]
+          attempt = os.environ["GITHUB_RUN_ATTEMPT"]
           manifest = {
-              "schema_version": "1.0.0",
+              "schema_version": "2.0.0",
               "evidence_class": "M0_M7_PUBLIC_DATA_ACQUISITION",
-              "authorized_base_sha": os.environ["AUTHORIZED_BASE_SHA"],
+              "authorized_origin_sha": os.environ["AUTHORIZED_ORIGIN_SHA"],
+              "implementation_base_sha": os.environ["IMPLEMENTATION_BASE_SHA"],
+              "authority_contract_sha256": os.environ["AUTHORITY_CONTRACT_SHA256"],
               "workflow_source_sha": os.environ["GITHUB_SHA"],
               "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "run_id": run_id,
+              "run_attempt": attempt,
               "event_name": os.environ["GITHUB_EVENT_NAME"],
               "fetched_at": fetched_at.isoformat(),
               "sources": {
-                  "spot_market": spot,
+                  "spot_market": spot_sources,
                   "derivatives_klines": derivatives_klines,
                   "derivatives_metrics": metrics,
                   "derivatives_funding": {
                       "status": "MONTHLY_ARCHIVE_ONLY",
                       "daily_archive_available": False,
-                      "note": "Binance Data Vision fundingRate archives are monthly; no synthetic daily substitute was used."
+                      "note": "No synthetic daily substitute was used."
                   },
                   "onchain": {
                       "url": onchain_url,
@@ -269,50 +273,113 @@ jobs:
               },
               "decision": "PUBLIC_DATA_ACQUISITION_PASS",
           }
-          manifest_path = OUT / "acquisition-manifest.json"
-          manifest_path.write_text(
+          (OUT / f"acquisition-manifest-{run_id}-{attempt}.json").write_text(
               json.dumps(manifest, sort_keys=True, indent=2) + "\n",
               encoding="utf-8",
           )
 
           print("PUBLIC_DATA_ACQUISITION=PASS")
-          print(f"SPOT_DATE={spot['date']}")
-          print(f"SPOT_LINES={spot['line_count']}")
-          print(f"DERIVATIVES_KLINES_DATE={derivatives_klines['date']}")
-          print(f"DERIVATIVES_KLINES_LINES={derivatives_klines['line_count']}")
-          print(f"METRICS_DATE={metrics['date']}")
-          print(f"METRICS_LINES={metrics['line_count']}")
+          print(f"SPOT_SYMBOLS={len(spot_sources)}")
+          print(f"SPOT_DATE={next(iter(spot_sources.values()))['date']}")
+          print(f"DERIVATIVES_DATE={derivatives_klines['date']}")
           print(f"ONCHAIN_ROWS={len(rows)}")
           print("EDGE_VERIFIED=false")
           print("LIVE_AUTHORIZED=false")
           PY
 
-      - name: Seal evidence checksum set
+      - name: Seal run evidence
         run: |
           set -euo pipefail
-          cd evidence/m0-m7-public-data
-          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS
-          sha256sum -c SHA256SUMS
+          (
+            cd run-evidence
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
 
-      - name: Upload immutable acquisition evidence
+      - name: Build cumulative point-in-time dataset
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/m0m7-ledger-view /tmp/m0m7-derived derived-output
+          mkdir -p /tmp/m0m7-ledger-view/evidence/m0-m7-public-data/runs
+
+          git fetch origin "refs/heads/$LEDGER_BRANCH:refs/remotes/origin/$LEDGER_BRANCH" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$LEDGER_BRANCH"; then
+            if git cat-file -e "refs/remotes/origin/$LEDGER_BRANCH:evidence/m0-m7-public-data/runs" 2>/dev/null; then
+              git archive "refs/remotes/origin/$LEDGER_BRANCH" evidence/m0-m7-public-data/runs | tar -x -C /tmp/m0m7-ledger-view
+            fi
+          fi
+
+          run_key="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "/tmp/m0m7-ledger-view/evidence/m0-m7-public-data/runs/$run_key"
+          cp -a run-evidence/. "/tmp/m0m7-ledger-view/evidence/m0-m7-public-data/runs/$run_key/"
+
+          python3 scripts/build_m0_m7_point_in_time.py             --input-dir /tmp/m0m7-ledger-view/evidence/m0-m7-public-data/runs             --output-dir /tmp/m0m7-derived
+
+          mkdir -p derived-output
+          cp -a /tmp/m0m7-derived/. derived-output/
+          (
+            cd derived-output
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path("derived-output/readiness.json").read_text())
+          print(f"DECISION_TIMESTAMPS={r['decision_timestamps']}")
+          print(f"ASSET_COUNT={r['asset_count']}")
+          print(f"MINIMUM_FOR_FIRST_FOLD={r['minimum_timestamps_for_first_fold']}")
+          print(f"DATASET_DECISION={r['decision']}")
+          assert r["EDGE_VERIFIED"] is False
+          assert r["holdout_accessed"] is False
+          assert r["paper_authorized"] is False
+          assert r["testnet_authorized"] is False
+          assert r["live_authorized"] is False
+          PY
+
+      - name: Upload immutable acquisition and derived evidence
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: m0-m7-public-data-${{ github.run_id }}-${{ github.run_attempt }}
-          path: evidence/m0-m7-public-data/
+          path: |
+            run-evidence/
+            derived-output/
           if-no-files-found: error
           retention-days: 90
 
-      - name: Persist evidence to dedicated branch
+      - name: Persist run and cumulative dataset to ledger branch
         run: |
           set -euo pipefail
-          evidence_branch="evidence/m0-m7-public-data-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          run_key="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          cp -a run-evidence "/tmp/m0m7-new-run"
+          cp -a derived-output "/tmp/m0m7-new-derived"
+          rm -rf run-evidence derived-output
+
+          if git show-ref --verify --quiet "refs/remotes/origin/$LEDGER_BRANCH"; then
+            git checkout -B "$LEDGER_BRANCH" "refs/remotes/origin/$LEDGER_BRANCH"
+          else
+            git checkout -b "$LEDGER_BRANCH"
+          fi
+
+          dest="evidence/m0-m7-public-data/runs/$run_key"
+          test ! -e "$dest"
+          mkdir -p "$dest"
+          cp -a /tmp/m0m7-new-run/. "$dest/"
+
+          rm -rf evidence/m0-m7-public-data/derived
+          mkdir -p evidence/m0-m7-public-data/derived
+          cp -a /tmp/m0m7-new-derived/. evidence/m0-m7-public-data/derived/
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$evidence_branch"
           git add evidence/m0-m7-public-data/
-          git commit -m "evidence: persist M0-M7 public data run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
-          git push origin "HEAD:refs/heads/$evidence_branch"
-          echo "EVIDENCE_BRANCH=$evidence_branch"
+          git commit -m "evidence: append M0-M7 public data run $run_key"
+          git push origin "HEAD:refs/heads/$LEDGER_BRANCH"
+
+          echo "LEDGER_BRANCH=$LEDGER_BRANCH"
           echo "EDGE_VERIFIED=false"
           echo "PAPER_AUTHORIZED=false"
           echo "TESTNET_AUTHORIZED=false"
