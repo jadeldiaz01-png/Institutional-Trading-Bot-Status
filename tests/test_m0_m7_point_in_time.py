@@ -147,9 +147,19 @@ class PointInTimeFeatureTests(unittest.TestCase):
         protocol["walk_forward"]["test_rows"] = 72
         protocol["walk_forward"]["purge_rows"] = 1
         rows = []
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
         for i in range(100):
+            decision = start + timedelta(hours=i)
+            target = decision + timedelta(hours=1)
+            timestamp = decision.isoformat().replace("+00:00", "Z")
+            target_close = target.isoformat().replace("+00:00", "Z")
             for asset in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
-                rows.append({"timestamp": f"{i:04d}", "asset": asset, "momentum_1h": 1.0})
+                rows.append({
+                    "timestamp": timestamp,
+                    "target_close_time": target_close,
+                    "asset": asset,
+                    "momentum_1h": 1.0,
+                })
         report = readiness_report(rows, protocol)
         self.assertEqual(report["decision_timestamps"], 100)
         self.assertEqual(report["asset_count"], 3)
