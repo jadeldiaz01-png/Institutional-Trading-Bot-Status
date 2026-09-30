@@ -7,7 +7,8 @@ on:
       - 'src/edge_lab/**'
       - 'scripts/run_m0_m7_ablation.py'
       - 'scripts/collect_edge_lab_public_data.py'
-      - 'tests/test_m0_m7_edge_lab.py'
+      - 'scripts/build_m0_m7_point_in_time.py'
+      - 'tests/test_m0_m7*.py'
       - '.github/workflows/m0-m7-edge-lab-ci.yml'
   workflow_dispatch:
 
@@ -53,14 +54,14 @@ jobs:
       - name: Compile research code
         run: |
           set -euo pipefail
-          python3 -m compileall -q src/edge_lab scripts/run_m0_m7_ablation.py scripts/collect_edge_lab_public_data.py tests/test_m0_m7_edge_lab.py
+          python3 -m compileall -q src/edge_lab scripts/run_m0_m7_ablation.py scripts/collect_edge_lab_public_data.py scripts/build_m0_m7_point_in_time.py tests/test_m0_m7_edge_lab.py tests/test_m0_m7_point_in_time.py
 
       - name: Run offline unit tests
         env:
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          python3 -m unittest discover -s tests -p 'test_m0_m7_edge_lab.py' -v
+          python3 -m unittest discover -s tests -p 'test_m0_m7*.py' -v
 
       - name: Reassert no promotion authority
         run: |

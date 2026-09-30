@@ -7,7 +7,13 @@
     "monthly_archive_may_be_added_later_under_separate_change": true,
     "synthetic_substitution_forbidden": true
   },
+  "implementation_base_sha": "a0483cc6a59bebec7fcedc1db2b232ab85eceade",
   "mode": "RESEARCH_ONLY",
+  "persistence": {
+    "artifact_retention_days": 90,
+    "cumulative_branch": "evidence/m0-m7-public-data-ledger",
+    "immutable_checksums": true
+  },
   "safety": {
     "EDGE_VERIFIED": false,
     "account_access_allowed": false,
@@ -19,7 +25,7 @@
     "paper_authorized": false,
     "testnet_authorized": false
   },
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "sources": {
     "binance_data_vision": [
       "spot_klines",
@@ -30,6 +36,25 @@
       "AdrActCnt",
       "TxCnt",
       "FeeTotNtv"
+    ]
+  },
+  "universe": {
+    "benchmark_symbol": "BTCUSDT",
+    "derivatives_symbols": [
+      "BTCUSD_PERP"
+    ],
+    "onchain_assets": [
+      "btc"
+    ],
+    "spot_symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "BNBUSDT",
+      "SOLUSDT",
+      "XRPUSDT",
+      "ADAUSDT",
+      "DOGEUSDT",
+      "AVAXUSDT"
     ]
   }
 }
