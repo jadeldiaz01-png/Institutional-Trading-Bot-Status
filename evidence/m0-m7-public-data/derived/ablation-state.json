@@ -1,0 +1,18 @@
+{
+  "EDGE_VERIFIED": false,
+  "blocked_models": [],
+  "decision_timestamps": 23,
+  "eligible_models": [],
+  "holdout_accessed": false,
+  "live_authorized": false,
+  "minimum_timestamps_for_first_fold": 313,
+  "mode": "RESEARCH_ONLY",
+  "next_gate": "CONTINUE_AUTOMATIC_ACCUMULATION",
+  "paper_authorized": false,
+  "run_attempt": "1",
+  "run_id": "36784206728",
+  "schema_version": "1.0.0",
+  "status": "WAITING_FOR_PROSPECTIVE_DATA",
+  "testnet_authorized": false,
+  "workflow_source_sha": "580c1e1a7e40528f5d185768f134b11b04983748"
+}
