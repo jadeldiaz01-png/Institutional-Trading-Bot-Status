@@ -7,8 +7,15 @@
     "monthly_archive_may_be_added_later_under_separate_change": true,
     "synthetic_substitution_forbidden": true
   },
-  "implementation_base_sha": "a0483cc6a59bebec7fcedc1db2b232ab85eceade",
+  "implementation_base_sha": "c17aea029f96a1bc0db5133accd40634ec8ccd96",
   "mode": "RESEARCH_ONLY",
+  "automatic_research_ablation": {
+    "enabled": true,
+    "minimum_decision_timestamps": 313,
+    "models_require_complete_oos_features": true,
+    "edge_verification_authority": false,
+    "promotion_authority": false
+  },
   "persistence": {
     "artifact_retention_days": 90,
     "cumulative_branch": "evidence/m0-m7-public-data-ledger",
@@ -25,7 +32,7 @@
     "paper_authorized": false,
     "testnet_authorized": false
   },
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "sources": {
     "binance_data_vision": [
       "spot_klines",

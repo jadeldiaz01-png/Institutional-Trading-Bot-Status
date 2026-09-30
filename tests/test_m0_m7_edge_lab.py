@@ -108,15 +108,23 @@ class EdgeLabTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "live_authorized"):
             evaluate_models(synthetic_rows(), protocol)
 
-    def test_missing_features_stays_flat(self) -> None:
+    def test_missing_features_block_model_instead_of_silent_fallback(self) -> None:
         rows = synthetic_rows()
         for row in rows:
-            for key in list(row):
-                if key.startswith("momentum_"):
-                    row[key] = None
+            row["momentum_1d"] = None
         report = evaluate_models(rows, small_protocol())
-        self.assertEqual(report["models"]["M0"]["overall"]["trade_transitions"], 0)
-        self.assertAlmostEqual(report["models"]["M0"]["overall"]["net_return"], 0.0)
+        m0 = report["models"]["M0"]
+        self.assertEqual(m0["status"], "BLOCKED_MISSING_FEATURES")
+        self.assertIn("momentum_1d", m0["missing_features"])
+        self.assertFalse(m0["candidate_screen_pass"])
+        self.assertIsNone(m0["overall"])
+        self.assertIn("M0", report["blocked_models"])
+
+    def test_fully_populated_model_is_evaluated(self) -> None:
+        report = evaluate_models(synthetic_rows(), small_protocol())
+        self.assertEqual(report["models"]["M0"]["status"], "EVALUATED_OOS")
+        self.assertIn("M0", report["eligible_models"])
+        self.assertNotIn("M0", report["blocked_models"])
 
 
 if __name__ == "__main__":
