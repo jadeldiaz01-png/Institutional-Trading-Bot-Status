@@ -1,0 +1,199 @@
+name: M0-M7 public data acquisition
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/m0-m7-public-data-acquisition.yml'
+      - 'scripts/collect_edge_lab_public_data.py'
+      - 'src/edge_lab/providers.py'
+      - 'experiments/m0_m7_edge_search/**'
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact main SHA authorized for acquisition
+        required: true
+        type: string
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: m0-m7-public-data-acquisition
+  cancel-in-progress: false
+
+env:
+  AUTHORIZED_BASE_SHA: 'b30d39d75a73b6cd001e5f2f007283c05ca2c669'
+
+jobs:
+  acquire:
+    name: public-readonly-acquisition
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout acquisition code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 2
+
+      - name: Fail closed on authority and lineage
+        env:
+          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = json.loads(Path("experiments/m0_m7_edge_search/protocol.json").read_text())
+          a = p["authority"]
+          assert a["edge_verified"] is False
+          assert a["holdout_access"] == "FORBIDDEN"
+          assert a["paper_authorized"] is False
+          assert a["testnet_authorized"] is False
+          assert a["live_authorized"] is False
+          provider = Path("src/edge_lab/providers.py").read_text()
+          for banned in ("/order", "/withdraw", "X-MBX-APIKEY", '"POST"', "'POST'"):
+              assert banned not in provider, banned
+          print("RESEARCH_ONLY_AUTHORITY=PASS")
+          PY
+
+          event="${GITHUB_EVENT_NAME}"
+          if [ "$event" = "workflow_dispatch" ]; then
+            test "$EXPECTED_MAIN_SHA" = "$AUTHORIZED_BASE_SHA"
+            test "$GITHUB_REF" = "refs/heads/main"
+            test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
+          elif [ "$event" = "pull_request" ]; then
+            # First-evidence bootstrap: PR must be based on the exact authorized main.
+            test "${{ github.event.pull_request.base.sha }}" = "$AUTHORIZED_BASE_SHA"
+          elif [ "$event" = "schedule" ]; then
+            # A scheduled run is valid only while default-branch main remains the authorized SHA.
+            test "$GITHUB_REF" = "refs/heads/main"
+            test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
+          else
+            echo "unsupported event: $event" >&2
+            exit 1
+          fi
+
+      - name: Compute bounded acquisition window
+        id: window
+        run: |
+          set -euo pipefail
+          now_ms="$(date -u +%s%3N)"
+          start_ms="$((now_ms - 24*60*60*1000))"
+          onchain_end="$(date -u +%Y-%m-%d)"
+          onchain_start="$(date -u -d '3 days ago' +%Y-%m-%d)"
+          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "now_ms=$now_ms" >> "$GITHUB_OUTPUT"
+          echo "start_ms=$start_ms" >> "$GITHUB_OUTPUT"
+          echo "onchain_start=$onchain_start" >> "$GITHUB_OUTPUT"
+          echo "onchain_end=$onchain_end" >> "$GITHUB_OUTPUT"
+          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
+
+      - name: Acquire public market derivatives and on-chain data
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/m0-m7-public-data
+          out="evidence/m0-m7-public-data/snapshot-${{ steps.window.outputs.stamp }}.json"
+          python3 scripts/collect_edge_lab_public_data.py \
+            --spot-symbol BTCUSDT \
+            --coinm-symbol BTCUSD_PERP \
+            --coinm-pair BTCUSD \
+            --interval 1h \
+            --start-ms "${{ steps.window.outputs.start_ms }}" \
+            --end-ms "${{ steps.window.outputs.now_ms }}" \
+            --onchain-asset btc \
+            --onchain-start "${{ steps.window.outputs.onchain_start }}" \
+            --onchain-end "${{ steps.window.outputs.onchain_end }}" \
+            --onchain-metrics 'AdrActCnt,TxCnt,FeeTotNtv' \
+            --output "$out"
+          echo "SNAPSHOT_PATH=$out" >> "$GITHUB_ENV"
+
+      - name: Validate and seal evidence
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+
+          path = Path(os.environ["SNAPSHOT_PATH"])
+          payload = json.loads(path.read_text())
+          safety = payload["safety"]
+          assert safety["credentials_used"] is False
+          assert safety["account_accessed"] is False
+          assert safety["orders_placed"] is False
+          assert safety["holdout_accessed"] is False
+          assert safety["live_authorized"] is False
+
+          data = payload["data"]
+          assert len(data["spot_klines"]) > 0
+          assert len(data["coinm_funding"]) > 0
+          assert len(data["coinm_open_interest"]) > 0
+          assert len(data["coinm_taker_buy_sell"]) > 0
+          assert len(data["coinm_basis"]) > 0
+          assert len(data["onchain_asset_metrics"]) > 0
+
+          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          manifest = {
+              "schema_version": "1.0.0",
+              "evidence_class": "M0_M7_PUBLIC_DATA_ACQUISITION",
+              "source_commit_sha": os.environ["GITHUB_SHA"],
+              "authorized_base_sha": os.environ["AUTHORIZED_BASE_SHA"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "event_name": os.environ["GITHUB_EVENT_NAME"],
+              "snapshot_path": str(path),
+              "snapshot_sha256": digest,
+              "data_sha256": payload["data_sha256"],
+              "fetched_at": payload["fetched_at"],
+              "counts": {k: len(v) for k, v in data.items()},
+              "safety": {
+                  "credentials_used": False,
+                  "account_accessed": False,
+                  "orders_placed": False,
+                  "holdout_accessed": False,
+                  "paper_authorized": False,
+                  "testnet_authorized": False,
+                  "live_authorized": False,
+                  "EDGE_VERIFIED": False,
+              },
+              "decision": "PUBLIC_DATA_ACQUISITION_PASS",
+          }
+          manifest_path = path.with_name(path.stem + "-manifest.json")
+          manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+          print("PUBLIC_DATA_ACQUISITION=PASS")
+          print("SNAPSHOT_SHA256=" + digest)
+          print("EDGE_VERIFIED=false")
+          print("LIVE_AUTHORIZED=false")
+          PY
+
+          sha256sum evidence/m0-m7-public-data/* > evidence/m0-m7-public-data/SHA256SUMS
+          sha256sum -c evidence/m0-m7-public-data/SHA256SUMS
+
+      - name: Upload immutable acquisition evidence
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: m0-m7-public-data-${{ steps.window.outputs.stamp }}
+          path: evidence/m0-m7-public-data/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Persist evidence to dedicated branch
+        run: |
+          set -euo pipefail
+          evidence_branch="evidence/m0-m7-public-data-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$evidence_branch"
+          git add evidence/m0-m7-public-data/
+          git commit -m "evidence: persist M0-M7 public data run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}"
+          git push origin "HEAD:refs/heads/$evidence_branch"
+          echo "EVIDENCE_BRANCH=$evidence_branch"
+          echo "EDGE_VERIFIED=false"
+          echo "PAPER_AUTHORIZED=false"
+          echo "TESTNET_AUTHORIZED=false"
+          echo "LIVE_AUTHORIZED=false"
