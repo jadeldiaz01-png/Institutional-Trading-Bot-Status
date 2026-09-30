@@ -424,26 +424,73 @@ def feature_availability(rows: list[dict[str, Any]], feature_sets: dict[str, lis
     return result
 
 
+def _parse_iso_utc(value: str) -> datetime:
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    return datetime.fromisoformat(normalized).astimezone(timezone.utc)
+
+
+def panel_quality(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    by_timestamp: dict[str, set[str]] = defaultdict(set)
+    seen: set[tuple[str, str]] = set()
+    target_after_decision = True
+    for row in rows:
+        timestamp = str(row["timestamp"])
+        asset = str(row["asset"])
+        key = (timestamp, asset)
+        if key in seen:
+            raise ValueError(f"duplicate panel key: {key}")
+        seen.add(key)
+        by_timestamp[timestamp].add(asset)
+        if _parse_iso_utc(str(row["target_close_time"])) <= _parse_iso_utc(timestamp):
+            target_after_decision = False
+
+    timestamps = sorted(by_timestamp)
+    asset_sets = [by_timestamp[ts] for ts in timestamps]
+    stable_universe = not asset_sets or all(s == asset_sets[0] for s in asset_sets)
+    max_gap_hours = 0.0
+    for left, right in zip(timestamps, timestamps[1:]):
+        gap = (_parse_iso_utc(right) - _parse_iso_utc(left)).total_seconds() / 3600.0
+        max_gap_hours = max(max_gap_hours, gap)
+    continuity_ok = len(timestamps) <= 1 or max_gap_hours <= 1.000001
+    return {
+        "stable_asset_universe": stable_universe,
+        "target_strictly_after_decision": target_after_decision,
+        "max_gap_hours": max_gap_hours,
+        "hourly_continuity_ok": continuity_ok,
+        "duplicate_keys": False,
+    }
+
+
 def readiness_report(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dict[str, Any]:
     timestamps = sorted({str(row["timestamp"]) for row in rows})
     assets = sorted({str(row["asset"]) for row in rows})
     wf = protocol["walk_forward"]
     minimum = int(wf["min_train_rows"]) + int(wf["purge_rows"]) + int(wf["test_rows"])
+    quality = panel_quality(rows)
+    history_ready = len(timestamps) >= minimum and all(
+        (
+            quality["stable_asset_universe"],
+            quality["target_strictly_after_decision"],
+            quality["hourly_continuity_ok"],
+            not quality["duplicate_keys"],
+        )
+    )
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "mode": "RESEARCH_ONLY",
         "decision_timestamps": len(timestamps),
         "assets": assets,
         "asset_count": len(assets),
         "minimum_timestamps_for_first_fold": minimum,
-        "history_ready_for_first_fold": len(timestamps) >= minimum,
+        "history_ready_for_first_fold": history_ready,
+        "data_quality": quality,
         "feature_availability": feature_availability(rows, protocol["feature_sets"]),
         "holdout_accessed": False,
         "EDGE_VERIFIED": False,
         "paper_authorized": False,
         "testnet_authorized": False,
         "live_authorized": False,
-        "decision": "DATASET_READY_FOR_ABLATION" if len(timestamps) >= minimum else "ACCUMULATE_MORE_PROSPECTIVE_DATA",
+        "decision": "DATASET_READY_FOR_ABLATION" if history_ready else "ACCUMULATE_MORE_PROSPECTIVE_DATA",
     }
 
 
