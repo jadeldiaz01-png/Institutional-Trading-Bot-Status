@@ -170,6 +170,21 @@ def _group_panel(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return result
 
 
+def _missing_required_features(
+    groups: list[dict[str, Any]],
+    folds: list[dict[str, int]],
+    features: list[str],
+) -> dict[str, int]:
+    missing = {feature: 0 for feature in features}
+    for fold in folds:
+        for idx in range(fold["test_start"], fold["test_end_exclusive"]):
+            for row in groups[idx]["asset_rows"].values():
+                for feature in features:
+                    if _finite_float(row.get(feature)) is None:
+                        missing[feature] += 1
+    return {feature: count for feature, count in missing.items() if count > 0}
+
+
 def _run_test_groups(
     groups: list[dict[str, Any]],
     indices: Iterable[int],
@@ -347,8 +362,25 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
     screen = protocol["candidate_screen"]
 
     models: dict[str, Any] = {}
+    eligible_models: list[str] = []
+    blocked_models: list[str] = []
     for model_name in sorted(protocol["feature_sets"]):
         features = list(protocol["feature_sets"][model_name])
+        missing_required = _missing_required_features(groups, folds, features)
+        if missing_required:
+            blocked_models.append(model_name)
+            models[model_name] = {
+                "features": features,
+                "status": "BLOCKED_MISSING_FEATURES",
+                "missing_features": sorted(missing_required),
+                "missing_observations_by_feature": missing_required,
+                "candidate_screen_pass": False,
+                "overall": None,
+                "folds": [],
+            }
+            continue
+
+        eligible_models.append(model_name)
         fold_parts: list[dict[str, Any]] = []
         fold_summaries: list[dict[str, Any]] = []
         positive_folds = 0
@@ -387,6 +419,8 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
         )
         models[model_name] = {
             "features": features,
+            "status": "EVALUATED_OOS",
+            "missing_features": [],
             "candidate_screen_pass": bool(candidate),
             "overall": overall,
             "folds": fold_summaries,
@@ -410,5 +444,7 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
         "EDGE_VERIFIED": False,
         "decision": "NO_EDGE_VERIFIED",
         "walk_forward_folds": folds,
+        "eligible_models": eligible_models,
+        "blocked_models": blocked_models,
         "models": models,
     }
