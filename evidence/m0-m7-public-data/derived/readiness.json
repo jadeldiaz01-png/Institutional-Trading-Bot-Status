@@ -1,0 +1,122 @@
+{
+  "EDGE_VERIFIED": false,
+  "asset_count": 8,
+  "assets": [
+    "ADAUSDT",
+    "AVAXUSDT",
+    "BNBUSDT",
+    "BTCUSDT",
+    "DOGEUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT"
+  ],
+  "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
+  "decision_timestamps": 23,
+  "feature_availability": {
+    "M0": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d"
+      ],
+      "rows": 184
+    },
+    "M1": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d"
+      ],
+      "rows": 184
+    },
+    "M2": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z"
+      ],
+      "rows": 184
+    },
+    "M3": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z",
+        "book_imbalance",
+        "microprice_edge"
+      ],
+      "rows": 184
+    },
+    "M4": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z",
+        "book_imbalance",
+        "microprice_edge",
+        "exchange_netflow_z"
+      ],
+      "rows": 184
+    },
+    "M5": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z",
+        "book_imbalance",
+        "microprice_edge",
+        "exchange_netflow_z",
+        "sentiment_z",
+        "news_novelty"
+      ],
+      "rows": 184
+    },
+    "M6": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z",
+        "book_imbalance",
+        "microprice_edge",
+        "exchange_netflow_z",
+        "sentiment_z",
+        "news_novelty",
+        "llm_event_score",
+        "llm_event_confidence"
+      ],
+      "rows": 184
+    },
+    "M7": {
+      "complete_fraction": 0.0,
+      "complete_rows": 0,
+      "missing_features": [
+        "momentum_1d",
+        "funding_z",
+        "book_imbalance",
+        "microprice_edge",
+        "exchange_netflow_z",
+        "sentiment_z",
+        "news_novelty",
+        "llm_event_score",
+        "llm_event_confidence",
+        "regime_trend",
+        "regime_volatility"
+      ],
+      "rows": 184
+    }
+  },
+  "history_ready_for_first_fold": false,
+  "holdout_accessed": false,
+  "live_authorized": false,
+  "minimum_timestamps_for_first_fold": 313,
+  "mode": "RESEARCH_ONLY",
+  "paper_authorized": false,
+  "schema_version": "1.0.0",
+  "testnet_authorized": false
+}

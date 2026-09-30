@@ -1,0 +1,36 @@
+{
+  "asset_count": 8,
+  "assets": [
+    "ADAUSDT",
+    "AVAXUSDT",
+    "BNBUSDT",
+    "BTCUSDT",
+    "DOGEUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XRPUSDT"
+  ],
+  "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
+  "decision_timestamps": 23,
+  "mode": "RESEARCH_ONLY",
+  "panel_path": "/tmp/m0m7-derived/point_in_time_panel.csv",
+  "panel_sha256": "cd60b4ebabc1c3a903ac7f8aed6eb068e587f91c51bb1868e3a296dd38250293",
+  "point_in_time_contract": {
+    "decision_timestamp": "source bar close time",
+    "feature_cutoff": "source_event_time <= decision_timestamp",
+    "forward_return_role": "label_only_strictly_after_decision_timestamp",
+    "future_feature_access": false,
+    "onchain_availability": "daily metric usable no earlier than metric_day_plus_1d"
+  },
+  "readiness_path": "/tmp/m0m7-derived/readiness.json",
+  "readiness_sha256": "e89d7b8d3baf975358215e016729f6dda959ee33949581fbbd7b07e936abbd63",
+  "row_count": 184,
+  "safety": {
+    "EDGE_VERIFIED": false,
+    "holdout_accessed": false,
+    "live_authorized": false,
+    "paper_authorized": false,
+    "testnet_authorized": false
+  },
+  "schema_version": "1.0.0"
+}
