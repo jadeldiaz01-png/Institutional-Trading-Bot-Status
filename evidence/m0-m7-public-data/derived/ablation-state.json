@@ -10,9 +10,9 @@
   "next_gate": "CONTINUE_AUTOMATIC_ACCUMULATION",
   "paper_authorized": false,
   "run_attempt": "1",
-  "run_id": "36784249075",
+  "run_id": "36784259712",
   "schema_version": "1.0.0",
   "status": "WAITING_FOR_PROSPECTIVE_DATA",
   "testnet_authorized": false,
-  "workflow_source_sha": "b0e2d697588af8cc3951b35f3cc48eb5f96fb11f"
+  "workflow_source_sha": "0d9e2877e6487b562da82cb1e04a1ff1a37e126b"
 }
