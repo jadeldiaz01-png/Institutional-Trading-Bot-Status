@@ -157,6 +157,38 @@ class PointInTimeFeatureTests(unittest.TestCase):
         self.assertFalse(report["history_ready_for_first_fold"])
         self.assertEqual(report["decision"], "ACCUMULATE_MORE_PROSPECTIVE_DATA")
 
+    def test_readiness_fails_closed_on_hourly_gap(self):
+        protocol = small_protocol()
+        protocol["walk_forward"]["min_train_rows"] = 2
+        protocol["walk_forward"]["test_rows"] = 1
+        protocol["walk_forward"]["purge_rows"] = 0
+        rows = [
+            {
+                "timestamp": "2026-01-01T00:59:59.999000Z",
+                "target_close_time": "2026-01-01T01:59:59.999000Z",
+                "asset": "BTCUSDT",
+                "momentum_1h": 1.0,
+            },
+            {
+                "timestamp": "2026-01-01T01:59:59.999000Z",
+                "target_close_time": "2026-01-01T02:59:59.999000Z",
+                "asset": "BTCUSDT",
+                "momentum_1h": 1.0,
+            },
+            {
+                "timestamp": "2026-01-01T03:59:59.999000Z",
+                "target_close_time": "2026-01-01T04:59:59.999000Z",
+                "asset": "BTCUSDT",
+                "momentum_1h": 1.0,
+            },
+        ]
+        report = readiness_report(rows, protocol)
+        self.assertEqual(report["decision_timestamps"], 3)
+        self.assertFalse(report["data_quality"]["hourly_continuity_ok"])
+        self.assertEqual(report["data_quality"]["max_gap_hours"], 2.0)
+        self.assertFalse(report["history_ready_for_first_fold"])
+        self.assertEqual(report["decision"], "ACCUMULATE_MORE_PROSPECTIVE_DATA")
+
 
 if __name__ == "__main__":
     unittest.main()
