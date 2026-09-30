@@ -4,10 +4,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/m0-m7-public-data-acquisition.yml'
+      - 'experiments/m0_m7_edge_search/acquisition-authority.json'
   workflow_dispatch:
     inputs:
-      expected_main_sha:
-        description: Exact main SHA authorized for acquisition
+      expected_origin_main_sha:
+        description: Exact origin main SHA recorded by the acquisition authority contract
         required: true
         type: string
   schedule:
@@ -22,6 +23,7 @@ concurrency:
 
 env:
   AUTHORIZED_BASE_SHA: 'b30d39d75a73b6cd001e5f2f007283c05ca2c669'
+  AUTHORITY_CONTRACT_SHA256: '5dc144737ca245eacabe3ac02f42882640aaaaa3e74ea85d7aaf86b06adf5961'
 
 jobs:
   acquire:
@@ -36,32 +38,50 @@ jobs:
 
       - name: Fail closed on authority and lineage
         env:
-          EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+          EXPECTED_ORIGIN_MAIN_SHA: ${{ inputs.expected_origin_main_sha }}
         run: |
           set -euo pipefail
+
+          contract="experiments/m0_m7_edge_search/acquisition-authority.json"
+          test -f "$contract"
+          echo "$AUTHORITY_CONTRACT_SHA256  $contract" | sha256sum -c -
+
           python3 - <<'PY'
           import json
           from pathlib import Path
-          p = json.loads(Path("experiments/m0_m7_edge_search/protocol.json").read_text())
-          a = p["authority"]
+
+          protocol = json.loads(Path("experiments/m0_m7_edge_search/protocol.json").read_text())
+          a = protocol["authority"]
           assert a["edge_verified"] is False
           assert a["holdout_access"] == "FORBIDDEN"
           assert a["paper_authorized"] is False
           assert a["testnet_authorized"] is False
           assert a["live_authorized"] is False
+
+          contract = json.loads(Path("experiments/m0_m7_edge_search/acquisition-authority.json").read_text())
+          assert contract["authorized_origin_main_sha"] == "b30d39d75a73b6cd001e5f2f007283c05ca2c669"
+          assert contract["mode"] == "RESEARCH_ONLY"
+          s = contract["safety"]
+          assert s["EDGE_VERIFIED"] is False
+          assert s["credentials_allowed"] is False
+          assert s["account_access_allowed"] is False
+          assert s["orders_allowed"] is False
+          assert s["capital_movement_allowed"] is False
+          assert s["holdout_access_allowed"] is False
+          assert s["paper_authorized"] is False
+          assert s["testnet_authorized"] is False
+          assert s["live_authorized"] is False
           print("RESEARCH_ONLY_AUTHORITY=PASS")
           PY
 
           event="${GITHUB_EVENT_NAME}"
           if [ "$event" = "workflow_dispatch" ]; then
-            test "$EXPECTED_MAIN_SHA" = "$AUTHORIZED_BASE_SHA"
+            test "$EXPECTED_ORIGIN_MAIN_SHA" = "$AUTHORIZED_BASE_SHA"
             test "$GITHUB_REF" = "refs/heads/main"
-            test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
           elif [ "$event" = "pull_request" ]; then
             test "${{ github.event.pull_request.base.sha }}" = "$AUTHORIZED_BASE_SHA"
           elif [ "$event" = "schedule" ]; then
             test "$GITHUB_REF" = "refs/heads/main"
-            test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
           else
             echo "unsupported event: $event" >&2
             exit 1
