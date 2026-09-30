@@ -1,0 +1,72 @@
+name: M0-M7 edge lab offline CI
+
+on:
+  pull_request:
+    paths:
+      - 'experiments/m0_m7_edge_search/**'
+      - 'src/edge_lab/**'
+      - 'scripts/run_m0_m7_ablation.py'
+      - 'scripts/collect_edge_lab_public_data.py'
+      - 'tests/test_m0_m7_edge_lab.py'
+      - '.github/workflows/m0-m7-edge-lab-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m0-m7-edge-lab-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline-ci:
+    name: research-only-offline-ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
+
+      - name: Assert research-only authority
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          protocol = json.loads(Path("experiments/m0_m7_edge_search/protocol.json").read_text())
+          authority = protocol["authority"]
+          assert authority["edge_verified"] is False
+          assert authority["holdout_access"] == "FORBIDDEN"
+          assert authority["paper_authorized"] is False
+          assert authority["testnet_authorized"] is False
+          assert authority["live_authorized"] is False
+
+          provider = Path("src/edge_lab/providers.py").read_text()
+          for banned in ('/order', '/withdraw', 'X-MBX-APIKEY', '"POST"', "'POST'"):
+              assert banned not in provider, banned
+          print("RESEARCH_ONLY_AUTHORITY=PASS")
+          PY
+
+      - name: Compile research code
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q src/edge_lab scripts/run_m0_m7_ablation.py scripts/collect_edge_lab_public_data.py tests/test_m0_m7_edge_lab.py
+
+      - name: Run offline unit tests
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_m0_m7_edge_lab.py' -v
+
+      - name: Reassert no promotion authority
+        run: |
+          set -euo pipefail
+          echo "EDGE_VERIFIED=false"
+          echo "HOLDOUT_ACCESSED=false"
+          echo "PAPER_AUTHORIZED=false"
+          echo "TESTNET_AUTHORIZED=false"
+          echo "LIVE_AUTHORIZED=false"
