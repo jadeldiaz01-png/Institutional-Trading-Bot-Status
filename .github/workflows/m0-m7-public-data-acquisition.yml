@@ -7,6 +7,7 @@ on:
       - 'experiments/m0_m7_edge_search/acquisition-authority.json'
       - 'src/edge_lab/feature_pipeline.py'
       - 'scripts/build_m0_m7_point_in_time.py'
+      - 'tests/test_m0_m7*.py'
   workflow_dispatch:
     inputs:
       expected_origin_main_sha:
