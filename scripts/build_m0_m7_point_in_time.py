@@ -68,6 +68,7 @@ def main() -> None:
         "decision_timestamps": readiness["decision_timestamps"],
         "asset_count": readiness["asset_count"],
         "assets": readiness["assets"],
+        "data_quality": readiness["data_quality"],
         "point_in_time_contract": {
             "decision_timestamp": "source bar close time",
             "feature_cutoff": "source_event_time <= decision_timestamp",
