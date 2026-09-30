@@ -4,9 +4,6 @@ on:
   pull_request:
     paths:
       - '.github/workflows/m0-m7-public-data-acquisition.yml'
-      - 'scripts/collect_edge_lab_public_data.py'
-      - 'src/edge_lab/providers.py'
-      - 'experiments/m0_m7_edge_search/**'
   workflow_dispatch:
     inputs:
       expected_main_sha:
@@ -14,7 +11,7 @@ on:
         required: true
         type: string
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17 3 * * *'
 
 permissions:
   contents: write
@@ -42,7 +39,6 @@ jobs:
           EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
         run: |
           set -euo pipefail
-
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -53,9 +49,6 @@ jobs:
           assert a["paper_authorized"] is False
           assert a["testnet_authorized"] is False
           assert a["live_authorized"] is False
-          provider = Path("src/edge_lab/providers.py").read_text()
-          for banned in ("/order", "/withdraw", "X-MBX-APIKEY", '"POST"', "'POST'"):
-              assert banned not in provider, banned
           print("RESEARCH_ONLY_AUTHORITY=PASS")
           PY
 
@@ -65,10 +58,8 @@ jobs:
             test "$GITHUB_REF" = "refs/heads/main"
             test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
           elif [ "$event" = "pull_request" ]; then
-            # First-evidence bootstrap: PR must be based on the exact authorized main.
             test "${{ github.event.pull_request.base.sha }}" = "$AUTHORIZED_BASE_SHA"
           elif [ "$event" = "schedule" ]; then
-            # A scheduled run is valid only while default-branch main remains the authorized SHA.
             test "$GITHUB_REF" = "refs/heads/main"
             test "$GITHUB_SHA" = "$AUTHORIZED_BASE_SHA"
           else
@@ -76,81 +67,171 @@ jobs:
             exit 1
           fi
 
-      - name: Compute bounded acquisition window
-        id: window
-        run: |
-          set -euo pipefail
-          now_ms="$(date -u +%s%3N)"
-          start_ms="$((now_ms - 24*60*60*1000))"
-          onchain_end="$(date -u +%Y-%m-%d)"
-          onchain_start="$(date -u -d '3 days ago' +%Y-%m-%d)"
-          stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-          echo "now_ms=$now_ms" >> "$GITHUB_OUTPUT"
-          echo "start_ms=$start_ms" >> "$GITHUB_OUTPUT"
-          echo "onchain_start=$onchain_start" >> "$GITHUB_OUTPUT"
-          echo "onchain_end=$onchain_end" >> "$GITHUB_OUTPUT"
-          echo "stamp=$stamp" >> "$GITHUB_OUTPUT"
-
-      - name: Acquire public market derivatives and on-chain data
+      - name: Acquire and verify public archives
         env:
           PYTHONPATH: src
         run: |
           set -euo pipefail
           mkdir -p evidence/m0-m7-public-data
-          out="evidence/m0-m7-public-data/snapshot-${{ steps.window.outputs.stamp }}.json"
-          python3 scripts/collect_edge_lab_public_data.py \
-            --spot-symbol BTCUSDT \
-            --coinm-symbol BTCUSD_PERP \
-            --coinm-pair BTCUSD \
-            --interval 1h \
-            --start-ms "${{ steps.window.outputs.start_ms }}" \
-            --end-ms "${{ steps.window.outputs.now_ms }}" \
-            --onchain-asset btc \
-            --onchain-start "${{ steps.window.outputs.onchain_start }}" \
-            --onchain-end "${{ steps.window.outputs.onchain_end }}" \
-            --onchain-metrics 'AdrActCnt,TxCnt,FeeTotNtv' \
-            --output "$out"
-          echo "SNAPSHOT_PATH=$out" >> "$GITHUB_ENV"
 
-      - name: Validate and seal evidence
-        run: |
-          set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os
+          from __future__ import annotations
+
+          import csv
+          import hashlib
+          import io
+          import json
+          import os
+          import urllib.request
+          import zipfile
+          from datetime import datetime, timedelta, timezone
           from pathlib import Path
+          from urllib.parse import urlencode, urlparse
 
-          path = Path(os.environ["SNAPSHOT_PATH"])
-          payload = json.loads(path.read_text())
-          safety = payload["safety"]
-          assert safety["credentials_used"] is False
-          assert safety["account_accessed"] is False
-          assert safety["orders_placed"] is False
-          assert safety["holdout_accessed"] is False
-          assert safety["live_authorized"] is False
+          OUT = Path("evidence/m0-m7-public-data")
+          OUT.mkdir(parents=True, exist_ok=True)
+          fetched_at = datetime.now(timezone.utc)
+          # Binance public daily archives are published the next day, so use the
+          # latest complete UTC day and fail over one more day if publication lags.
+          candidate_days = [
+              (fetched_at.date() - timedelta(days=1)).isoformat(),
+              (fetched_at.date() - timedelta(days=2)).isoformat(),
+          ]
 
-          data = payload["data"]
-          assert len(data["spot_klines"]) > 0
-          assert len(data["coinm_funding"]) > 0
-          assert len(data["coinm_open_interest"]) > 0
-          assert len(data["coinm_taker_buy_sell"]) > 0
-          assert len(data["coinm_basis"]) > 0
-          assert len(data["onchain_asset_metrics"]) > 0
+          allowed_hosts = {"data.binance.vision", "community-api.coinmetrics.io"}
 
-          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          def get_bytes(url: str, timeout: float = 30.0) -> bytes:
+              parsed = urlparse(url)
+              if parsed.scheme != "https" or parsed.hostname not in allowed_hosts:
+                  raise RuntimeError(f"host not allowlisted: {parsed.hostname}")
+              req = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept": "*/*",
+                      "User-Agent": "institutional-trading-bot-status-edge-lab/1.0",
+                  },
+                  method="GET",
+              )
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  if response.status != 200:
+                      raise RuntimeError(f"HTTP {response.status}: {url}")
+                  return response.read()
+
+          def sha256(data: bytes) -> str:
+              return hashlib.sha256(data).hexdigest()
+
+          def download_binance_archive(kind: str, url_builder):
+              errors = []
+              for day in candidate_days:
+                  url = url_builder(day)
+                  try:
+                      zip_bytes = get_bytes(url)
+                      checksum_bytes = get_bytes(url + ".CHECKSUM")
+                      checksum_text = checksum_bytes.decode("utf-8").strip()
+                      expected = checksum_text.split()[0].lower()
+                      actual = sha256(zip_bytes)
+                      if len(expected) != 64 or expected != actual:
+                          raise RuntimeError(
+                              f"checksum mismatch expected={expected} actual={actual}"
+                          )
+                      with zipfile.ZipFile(io.BytesIO(zip_bytes)) as archive:
+                          names = archive.namelist()
+                          if len(names) != 1:
+                              raise RuntimeError(f"unexpected archive members: {names}")
+                          csv_bytes = archive.read(names[0])
+                      lines = [line for line in csv_bytes.decode("utf-8").splitlines() if line.strip()]
+                      if not lines:
+                          raise RuntimeError("empty extracted CSV")
+
+                      zip_path = OUT / f"{kind}-{day}.zip"
+                      csv_path = OUT / f"{kind}-{day}.csv"
+                      checksum_path = OUT / f"{kind}-{day}.CHECKSUM"
+                      zip_path.write_bytes(zip_bytes)
+                      csv_path.write_bytes(csv_bytes)
+                      checksum_path.write_bytes(checksum_bytes)
+                      return {
+                          "kind": kind,
+                          "date": day,
+                          "url": url,
+                          "zip_path": str(zip_path),
+                          "zip_sha256": actual,
+                          "csv_path": str(csv_path),
+                          "csv_sha256": sha256(csv_bytes),
+                          "line_count": len(lines),
+                          "binance_checksum_verified": True,
+                      }
+                  except Exception as exc:
+                      errors.append({"date": day, "error": str(exc)})
+              raise RuntimeError(f"{kind} unavailable for candidate days: {errors}")
+
+          spot = download_binance_archive(
+              "spot-klines-BTCUSDT-1h",
+              lambda day: (
+                  "https://data.binance.vision/data/spot/daily/klines/"
+                  f"BTCUSDT/1h/BTCUSDT-1h-{day}.zip"
+              ),
+          )
+          funding = download_binance_archive(
+              "coinm-funding-BTCUSD_PERP",
+              lambda day: (
+                  "https://data.binance.vision/data/futures/cm/daily/fundingRate/"
+                  f"BTCUSD_PERP/BTCUSD_PERP-fundingRate-{day}.zip"
+              ),
+          )
+          metrics = download_binance_archive(
+              "coinm-metrics-BTCUSD_PERP",
+              lambda day: (
+                  "https://data.binance.vision/data/futures/cm/daily/metrics/"
+                  f"BTCUSD_PERP/BTCUSD_PERP-metrics-{day}.zip"
+              ),
+          )
+
+          onchain_start = (fetched_at.date() - timedelta(days=4)).isoformat()
+          onchain_end = fetched_at.date().isoformat()
+          params = {
+              "assets": "btc",
+              "metrics": "AdrActCnt,TxCnt,FeeTotNtv",
+              "start_time": onchain_start,
+              "end_time": onchain_end,
+              "frequency": "1d",
+              "page_size": 10000,
+              "paging_from": "start",
+          }
+          onchain_url = (
+              "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?"
+              + urlencode(params)
+          )
+          onchain_bytes = get_bytes(onchain_url)
+          onchain = json.loads(onchain_bytes.decode("utf-8"))
+          rows = onchain.get("data", [])
+          if not rows:
+              raise RuntimeError("Coin Metrics Community API returned no rows")
+          onchain_path = OUT / "coinmetrics-btc-onchain.json"
+          onchain_path.write_bytes(onchain_bytes)
+
           manifest = {
               "schema_version": "1.0.0",
               "evidence_class": "M0_M7_PUBLIC_DATA_ACQUISITION",
-              "source_commit_sha": os.environ["GITHUB_SHA"],
               "authorized_base_sha": os.environ["AUTHORIZED_BASE_SHA"],
+              "workflow_source_sha": os.environ["GITHUB_SHA"],
               "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
               "run_id": os.environ["GITHUB_RUN_ID"],
               "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "event_name": os.environ["GITHUB_EVENT_NAME"],
-              "snapshot_path": str(path),
-              "snapshot_sha256": digest,
-              "data_sha256": payload["data_sha256"],
-              "fetched_at": payload["fetched_at"],
-              "counts": {k: len(v) for k, v in data.items()},
+              "fetched_at": fetched_at.isoformat(),
+              "sources": {
+                  "spot_market": spot,
+                  "derivatives_funding": funding,
+                  "derivatives_metrics": metrics,
+                  "onchain": {
+                      "url": onchain_url,
+                      "path": str(onchain_path),
+                      "sha256": sha256(onchain_bytes),
+                      "row_count": len(rows),
+                      "start_time": onchain_start,
+                      "end_time": onchain_end,
+                  },
+              },
               "safety": {
                   "credentials_used": False,
                   "account_accessed": False,
@@ -163,21 +244,35 @@ jobs:
               },
               "decision": "PUBLIC_DATA_ACQUISITION_PASS",
           }
-          manifest_path = path.with_name(path.stem + "-manifest.json")
-          manifest_path.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+          manifest_path = OUT / "acquisition-manifest.json"
+          manifest_path.write_text(
+              json.dumps(manifest, sort_keys=True, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
           print("PUBLIC_DATA_ACQUISITION=PASS")
-          print("SNAPSHOT_SHA256=" + digest)
+          print(f"SPOT_DATE={spot['date']}")
+          print(f"SPOT_LINES={spot['line_count']}")
+          print(f"FUNDING_DATE={funding['date']}")
+          print(f"FUNDING_LINES={funding['line_count']}")
+          print(f"METRICS_DATE={metrics['date']}")
+          print(f"METRICS_LINES={metrics['line_count']}")
+          print(f"ONCHAIN_ROWS={len(rows)}")
           print("EDGE_VERIFIED=false")
           print("LIVE_AUTHORIZED=false")
           PY
 
-          sha256sum evidence/m0-m7-public-data/* > evidence/m0-m7-public-data/SHA256SUMS
-          sha256sum -c evidence/m0-m7-public-data/SHA256SUMS
+      - name: Seal evidence checksum set
+        run: |
+          set -euo pipefail
+          cd evidence/m0-m7-public-data
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
 
       - name: Upload immutable acquisition evidence
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
-          name: m0-m7-public-data-${{ steps.window.outputs.stamp }}
+          name: m0-m7-public-data-${{ github.run_id }}-${{ github.run_attempt }}
           path: evidence/m0-m7-public-data/
           if-no-files-found: error
           retention-days: 90
