@@ -171,11 +171,11 @@ jobs:
                   f"BTCUSDT/1h/BTCUSDT-1h-{day}.zip"
               ),
           )
-          funding = download_binance_archive(
-              "coinm-funding-BTCUSD_PERP",
+          derivatives_klines = download_binance_archive(
+              "coinm-klines-BTCUSD_PERP-1h",
               lambda day: (
-                  "https://data.binance.vision/data/futures/cm/daily/fundingRate/"
-                  f"BTCUSD_PERP/BTCUSD_PERP-fundingRate-{day}.zip"
+                  "https://data.binance.vision/data/futures/cm/daily/klines/"
+                  f"BTCUSD_PERP/1h/BTCUSD_PERP-1h-{day}.zip"
               ),
           )
           metrics = download_binance_archive(
@@ -221,8 +221,13 @@ jobs:
               "fetched_at": fetched_at.isoformat(),
               "sources": {
                   "spot_market": spot,
-                  "derivatives_funding": funding,
+                  "derivatives_klines": derivatives_klines,
                   "derivatives_metrics": metrics,
+                  "derivatives_funding": {
+                      "status": "MONTHLY_ARCHIVE_ONLY",
+                      "daily_archive_available": False,
+                      "note": "Binance Data Vision fundingRate archives are monthly; no synthetic daily substitute was used."
+                  },
                   "onchain": {
                       "url": onchain_url,
                       "path": str(onchain_path),
@@ -253,8 +258,8 @@ jobs:
           print("PUBLIC_DATA_ACQUISITION=PASS")
           print(f"SPOT_DATE={spot['date']}")
           print(f"SPOT_LINES={spot['line_count']}")
-          print(f"FUNDING_DATE={funding['date']}")
-          print(f"FUNDING_LINES={funding['line_count']}")
+          print(f"DERIVATIVES_KLINES_DATE={derivatives_klines['date']}")
+          print(f"DERIVATIVES_KLINES_LINES={derivatives_klines['line_count']}")
           print(f"METRICS_DATE={metrics['date']}")
           print(f"METRICS_LINES={metrics['line_count']}")
           print(f"ONCHAIN_ROWS={len(rows)}")
