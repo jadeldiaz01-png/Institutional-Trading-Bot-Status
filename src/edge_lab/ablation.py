@@ -1,6 +1,9 @@
 """Deterministic research-only M0→M7 ablation evaluator.
 
-This module never opens a holdout and never grants execution authority.
+Supports a point-in-time asset panel. At each timestamp, positions are equally
+weighted across the configured asset universe (inactive assets remain cash).
+The existing CP03 holdout is never opened and this module never grants execution
+authority.
 """
 
 from __future__ import annotations
@@ -69,17 +72,15 @@ def make_walk_forward_folds(
         test_end = min(test_start + test_rows, n_rows)
         if test_end <= test_start:
             break
-        folds.append(
-            {
-                "fold": fold_id,
-                "train_start": 0,
-                "train_end_exclusive": train_end,
-                "purge_start": train_end,
-                "test_start": test_start,
-                "test_end_exclusive": test_end,
-                "embargo_end_exclusive": min(n_rows, test_end + embargo_rows),
-            }
-        )
+        folds.append({
+            "fold": fold_id,
+            "train_start": 0,
+            "train_end_exclusive": train_end,
+            "purge_start": train_end,
+            "test_start": test_start,
+            "test_end_exclusive": test_end,
+            "embargo_end_exclusive": min(n_rows, test_end + embargo_rows),
+        })
         fold_id += 1
         train_end += step_rows
     return folds
@@ -89,8 +90,6 @@ def _feature_value(row: dict[str, Any], feature: str) -> float | None:
     value = _finite_float(row.get(feature))
     if value is None:
         return None
-
-    # Confidence is a magnitude modifier, not an independent directional signal.
     if feature == "llm_event_confidence":
         return None
     if feature == "llm_event_score":
@@ -121,8 +120,58 @@ def position_from_score(score: float, *, entry_threshold: float) -> int:
     return 0
 
 
-def _run_test_rows(
-    rows: list[dict[str, Any]],
+def _group_panel(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    groups: dict[str, list[dict[str, Any]]] = {}
+    seen_pairs: set[tuple[str, str]] = set()
+    for row in rows:
+        timestamp = str(row.get("timestamp", ""))
+        if not timestamp:
+            raise ValueError("every row requires timestamp")
+        asset = str(row.get("asset") or "__portfolio__")
+        pair = (timestamp, asset)
+        if pair in seen_pairs:
+            raise ValueError(f"duplicate timestamp/asset pair: {pair}")
+        seen_pairs.add(pair)
+        groups.setdefault(timestamp, []).append(row)
+
+    timestamps = sorted(groups)
+    first_assets: set[str] | None = None
+    result: list[dict[str, Any]] = []
+    for timestamp in timestamps:
+        group_rows = groups[timestamp]
+        asset_rows: dict[str, dict[str, Any]] = {}
+        benchmark_values: list[float] = []
+        for row in group_rows:
+            asset = str(row.get("asset") or "__portfolio__")
+            asset_rows[asset] = row
+            benchmark = _finite_float(row.get("benchmark_return"))
+            if benchmark is None:
+                raise ValueError(f"{timestamp}/{asset} lacks finite benchmark_return")
+            benchmark_values.append(benchmark)
+
+        assets = set(asset_rows)
+        if first_assets is None:
+            first_assets = assets
+        elif assets != first_assets:
+            missing = sorted(first_assets - assets)
+            extra = sorted(assets - first_assets)
+            raise ValueError(f"asset universe changed at {timestamp}; missing={missing}, extra={extra}")
+
+        if max(benchmark_values) - min(benchmark_values) > 1e-12:
+            raise ValueError(f"inconsistent benchmark_return within timestamp {timestamp}")
+
+        result.append({
+            "timestamp": timestamp,
+            "asset_rows": asset_rows,
+            "benchmark_return": benchmark_values[0],
+        })
+    return result
+
+
+def _run_test_groups(
+    groups: list[dict[str, Any]],
     indices: Iterable[int],
     *,
     features: list[str],
@@ -130,46 +179,58 @@ def _run_test_rows(
     entry_threshold: float,
     clip_abs_z: float,
 ) -> dict[str, Any]:
-    previous_position = 0
+    previous_positions: dict[str, int] = {}
     net_returns: list[float] = []
     gross_returns: list[float] = []
     benchmark_returns: list[float] = []
     total_execution_cost = 0.0
     total_funding_pnl = 0.0
     turnover_total = 0.0
-    trades = 0
+    transitions = 0
 
     for idx in indices:
-        row = rows[idx]
-        forward_return = _finite_float(row.get("forward_return"))
-        benchmark_return = _finite_float(row.get("benchmark_return"))
-        if forward_return is None or benchmark_return is None:
-            raise ValueError(f"row {idx} lacks finite forward_return/benchmark_return")
+        group = groups[idx]
+        asset_rows: dict[str, dict[str, Any]] = group["asset_rows"]
+        universe_size = len(asset_rows)
+        if universe_size < 1:
+            raise ValueError(f"group {idx} has empty asset universe")
 
-        score = score_row(row, features, clip_abs_z=clip_abs_z)
-        position = position_from_score(score, entry_threshold=entry_threshold)
-        turnover = abs(position - previous_position)
-        if turnover > 0:
-            trades += 1
+        gross_sum = cost_sum = funding_sum = turnover_sum = 0.0
+        next_positions: dict[str, int] = {}
+        for asset, row in sorted(asset_rows.items()):
+            forward_return = _finite_float(row.get("forward_return"))
+            if forward_return is None:
+                raise ValueError(f"group {idx}/{asset} lacks finite forward_return")
 
-        gross = position * forward_return
-        execution_cost = cost_model.execution_cost_fraction(turnover, row)
+            score = score_row(row, features, clip_abs_z=clip_abs_z)
+            position = position_from_score(score, entry_threshold=entry_threshold)
+            previous = previous_positions.get(asset, 0)
+            turnover = abs(position - previous)
+            if turnover > 0:
+                transitions += 1
 
-        funding_bps = _finite_float(row.get("funding_bps")) or 0.0
-        # Positive funding: longs pay, shorts receive. Negative funding reverses that.
-        funding_pnl = -position * funding_bps / 10_000.0
+            gross_sum += position * forward_return
+            cost_sum += cost_model.execution_cost_fraction(turnover, row)
+            funding_bps = _finite_float(row.get("funding_bps")) or 0.0
+            funding_sum += -position * funding_bps / 10_000.0
+            turnover_sum += turnover
+            next_positions[asset] = position
 
+        gross = gross_sum / universe_size
+        execution_cost = cost_sum / universe_size
+        funding_pnl = funding_sum / universe_size
+        turnover = turnover_sum / universe_size
         net = gross - execution_cost + funding_pnl
         if net <= -1.0:
-            raise ValueError(f"row {idx} produces net return <= -100%; invalid for compounding")
+            raise ValueError(f"group {idx} produces net return <= -100%; invalid for compounding")
 
         gross_returns.append(gross)
         net_returns.append(net)
-        benchmark_returns.append(benchmark_return)
+        benchmark_returns.append(float(group["benchmark_return"]))
         total_execution_cost += execution_cost
         total_funding_pnl += funding_pnl
         turnover_total += turnover
-        previous_position = position
+        previous_positions = next_positions
 
     return {
         "net_returns": net_returns,
@@ -178,7 +239,7 @@ def _run_test_rows(
         "execution_cost": total_execution_cost,
         "funding_pnl": total_funding_pnl,
         "turnover": turnover_total,
-        "trades": trades,
+        "transitions": transitions,
     }
 
 
@@ -196,8 +257,7 @@ def _max_drawdown(returns: Iterable[float]) -> float:
     for value in returns:
         equity *= 1.0 + value
         peak = max(peak, equity)
-        drawdown = equity / peak - 1.0
-        worst = min(worst, drawdown)
+        worst = min(worst, equity / peak - 1.0)
     return worst
 
 
@@ -214,10 +274,8 @@ def _summarize(parts: list[dict[str, Any]], *, annualization_periods: int) -> di
     net: list[float] = []
     gross: list[float] = []
     bench: list[float] = []
-    execution_cost = 0.0
-    funding_pnl = 0.0
-    turnover = 0.0
-    trades = 0
+    execution_cost = funding_pnl = turnover = 0.0
+    transitions = 0
     for part in parts:
         net.extend(part["net_returns"])
         gross.extend(part["gross_returns"])
@@ -225,21 +283,21 @@ def _summarize(parts: list[dict[str, Any]], *, annualization_periods: int) -> di
         execution_cost += part["execution_cost"]
         funding_pnl += part["funding_pnl"]
         turnover += part["turnover"]
-        trades += part["trades"]
+        transitions += part["transitions"]
 
     net_total = _compound(net)
-    gross_total = _compound(gross)
     benchmark_total = _compound(bench)
     return {
         "observations": len(net),
-        "gross_return": gross_total,
+        "gross_return": _compound(gross),
         "net_return": net_total,
         "benchmark_return": benchmark_total,
         "simple_alpha": net_total - benchmark_total,
         "sharpe": _sharpe(net, annualization_periods),
         "max_drawdown": _max_drawdown(net),
         "turnover": turnover,
-        "trade_transitions": trades,
+        "position_transitions": transitions,
+        "trade_transitions": transitions,
         "execution_cost_fraction_sum": execution_cost,
         "funding_pnl_fraction_sum": funding_pnl,
     }
@@ -255,9 +313,13 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
         if authority.get(key) is not False:
             raise ValueError(f"protocol must keep {key}=false")
 
+    groups = _group_panel(rows)
+    if not groups:
+        raise ValueError("dataset is empty")
+
     wf = protocol["walk_forward"]
     folds = make_walk_forward_folds(
-        len(rows),
+        len(groups),
         min_train_rows=int(wf["min_train_rows"]),
         test_rows=int(wf["test_rows"]),
         step_rows=int(wf["step_rows"]),
@@ -285,16 +347,15 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
     screen = protocol["candidate_screen"]
 
     models: dict[str, Any] = {}
-    feature_sets = protocol["feature_sets"]
-    for model_name in sorted(feature_sets):
-        features = list(feature_sets[model_name])
+    for model_name in sorted(protocol["feature_sets"]):
+        features = list(protocol["feature_sets"][model_name])
         fold_parts: list[dict[str, Any]] = []
         fold_summaries: list[dict[str, Any]] = []
         positive_folds = 0
 
         for fold in folds:
-            part = _run_test_rows(
-                rows,
+            part = _run_test_groups(
+                groups,
                 range(fold["test_start"], fold["test_end_exclusive"]),
                 features=features,
                 cost_model=cost_model,
@@ -306,6 +367,8 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
             summary["fold"] = fold["fold"]
             summary["test_start"] = fold["test_start"]
             summary["test_end_exclusive"] = fold["test_end_exclusive"]
+            summary["test_start_timestamp"] = groups[fold["test_start"]]["timestamp"]
+            summary["test_end_timestamp"] = groups[fold["test_end_exclusive"] - 1]["timestamp"]
             if summary["net_return"] > 0.0:
                 positive_folds += 1
             fold_summaries.append(summary)
@@ -315,7 +378,6 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
         overall["positive_folds"] = positive_folds
         overall["fold_count"] = len(folds)
         overall["positive_fold_fraction"] = positive_fraction
-
         sharpe = overall["sharpe"]
         candidate = (
             (not screen.get("require_net_return_positive") or overall["net_return"] > 0.0)
@@ -323,7 +385,6 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
             and positive_fraction >= float(screen["require_positive_fold_fraction"])
             and (not screen.get("require_sharpe_positive") or (sharpe is not None and sharpe > 0.0))
         )
-
         models[model_name] = {
             "features": features,
             "candidate_screen_pass": bool(candidate),
@@ -331,10 +392,17 @@ def evaluate_models(rows: list[dict[str, Any]], protocol: dict[str, Any]) -> dic
             "folds": fold_summaries,
         }
 
+    assets = sorted(groups[0]["asset_rows"])
     return {
-        "schema_version": "1.0.0",
+        "schema_version": "2.0.0",
         "experiment_id": protocol["experiment_id"],
         "mode": "RESEARCH_ONLY",
+        "panel": {
+            "decision_timestamps": len(groups),
+            "assets": assets,
+            "asset_count": len(assets),
+            "portfolio_weighting": "equal_weight_across_configured_universe_cash_when_inactive",
+        },
         "holdout_accessed": False,
         "paper_authorized": False,
         "testnet_authorized": False,
