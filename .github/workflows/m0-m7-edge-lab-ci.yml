@@ -67,7 +67,7 @@ jobs:
       - name: Compile research code
         run: |
           set -euo pipefail
-          python3 -m compileall -q src/edge_lab scripts/run_m0_m7_ablation.py scripts/collect_edge_lab_public_data.py scripts/build_m0_m7_point_in_time.py tests/test_m0_m7_edge_lab.py tests/test_m0_m7_point_in_time.py
+          python3 -m compileall -q src/edge_lab scripts/run_m0_m7_ablation.py scripts/run_m0_m7_readiness_gate.py scripts/collect_edge_lab_public_data.py scripts/build_m0_m7_point_in_time.py tests/test_m0_m7_edge_lab.py tests/test_m0_m7_point_in_time.py tests/test_m0_m7_readiness_gate.py
 
       - name: Run offline unit tests
         env:
