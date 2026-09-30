@@ -7,6 +7,8 @@ on:
       - 'experiments/m0_m7_edge_search/acquisition-authority.json'
       - 'src/edge_lab/feature_pipeline.py'
       - 'scripts/build_m0_m7_point_in_time.py'
+      - 'scripts/run_m0_m7_ablation.py'
+      - 'src/edge_lab/ablation.py'
       - 'tests/test_m0_m7*.py'
   workflow_dispatch:
     inputs:
@@ -340,6 +342,105 @@ jobs:
           assert r["testnet_authorized"] is False
           assert r["live_authorized"] is False
           PY
+
+      - name: Run research-only ablation gate when dataset is ready
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+
+          ready="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r = json.loads(Path("derived-output/readiness.json").read_text())
+          print("true" if r["history_ready_for_first_fold"] else "false")
+          PY
+          )"
+
+          if [ "$ready" = "true" ]; then
+            python3 scripts/run_m0_m7_ablation.py               --input derived-output/point_in_time_panel.csv               --output derived-output/ablation-report.json
+
+            python3 - <<'PY'
+            import hashlib
+            import json
+            import os
+            from pathlib import Path
+
+            report_path = Path("derived-output/ablation-report.json")
+            report = json.loads(report_path.read_text())
+            assert report["EDGE_VERIFIED"] is False
+            assert report["holdout_accessed"] is False
+            assert report["paper_authorized"] is False
+            assert report["testnet_authorized"] is False
+            assert report["live_authorized"] is False
+
+            digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+            state = {
+                "schema_version": "1.0.0",
+                "mode": "RESEARCH_ONLY",
+                "status": "RESEARCH_ABLATION_COMPLETE",
+                "run_id": os.environ["GITHUB_RUN_ID"],
+                "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                "workflow_source_sha": os.environ["GITHUB_SHA"],
+                "ablation_report_sha256": digest,
+                "eligible_models": report["eligible_models"],
+                "blocked_models": report["blocked_models"],
+                "EDGE_VERIFIED": False,
+                "holdout_accessed": False,
+                "paper_authorized": False,
+                "testnet_authorized": False,
+                "live_authorized": False,
+                "next_gate": "HUMAN_REVIEW_OF_RESEARCH_RESULTS"
+            }
+            Path("derived-output/ablation-state.json").write_text(
+                json.dumps(state, sort_keys=True, indent=2) + "\n"
+            )
+            print("ABLATION_GATE=RESEARCH_ABLATION_COMPLETE")
+            print("ELIGIBLE_MODELS=" + ",".join(report["eligible_models"]))
+            print("BLOCKED_MODELS=" + ",".join(report["blocked_models"]))
+            print("EDGE_VERIFIED=false")
+            PY
+          else
+            python3 - <<'PY'
+            import json
+            import os
+            from pathlib import Path
+
+            readiness = json.loads(Path("derived-output/readiness.json").read_text())
+            state = {
+                "schema_version": "1.0.0",
+                "mode": "RESEARCH_ONLY",
+                "status": "WAITING_FOR_PROSPECTIVE_DATA",
+                "run_id": os.environ["GITHUB_RUN_ID"],
+                "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                "workflow_source_sha": os.environ["GITHUB_SHA"],
+                "decision_timestamps": readiness["decision_timestamps"],
+                "minimum_timestamps_for_first_fold": readiness["minimum_timestamps_for_first_fold"],
+                "EDGE_VERIFIED": False,
+                "holdout_accessed": False,
+                "paper_authorized": False,
+                "testnet_authorized": False,
+                "live_authorized": False,
+                "next_gate": "CONTINUE_AUTOMATIC_ACCUMULATION"
+            }
+            Path("derived-output/ablation-state.json").write_text(
+                json.dumps(state, sort_keys=True, indent=2) + "\n"
+            )
+            print("ABLATION_GATE=WAITING_FOR_PROSPECTIVE_DATA")
+            print(
+                f"READINESS={readiness['decision_timestamps']}/"
+                f"{readiness['minimum_timestamps_for_first_fold']}"
+            )
+            print("EDGE_VERIFIED=false")
+            PY
+          fi
+
+          rm -f derived-output/SHA256SUMS
+          (
+            cd derived-output
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\n' | sort | xargs sha256sum > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
 
       - name: Upload immutable acquisition and derived evidence
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
