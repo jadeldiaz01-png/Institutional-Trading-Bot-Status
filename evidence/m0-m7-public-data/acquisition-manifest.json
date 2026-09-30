@@ -1,0 +1,70 @@
+{
+  "authorized_base_sha": "b30d39d75a73b6cd001e5f2f007283c05ca2c669",
+  "decision": "PUBLIC_DATA_ACQUISITION_PASS",
+  "event_name": "pull_request",
+  "evidence_class": "M0_M7_PUBLIC_DATA_ACQUISITION",
+  "fetched_at": "2026-09-30T21:38:25.580122+00:00",
+  "run_attempt": "1",
+  "run_id": "36780703623",
+  "safety": {
+    "EDGE_VERIFIED": false,
+    "account_accessed": false,
+    "credentials_used": false,
+    "holdout_accessed": false,
+    "live_authorized": false,
+    "orders_placed": false,
+    "paper_authorized": false,
+    "testnet_authorized": false
+  },
+  "schema_version": "1.0.0",
+  "sources": {
+    "derivatives_funding": {
+      "daily_archive_available": false,
+      "note": "Binance Data Vision fundingRate archives are monthly; no synthetic daily substitute was used.",
+      "status": "MONTHLY_ARCHIVE_ONLY"
+    },
+    "derivatives_klines": {
+      "binance_checksum_verified": true,
+      "csv_path": "evidence/m0-m7-public-data/coinm-klines-BTCUSD_PERP-1h-2026-09-29.csv",
+      "csv_sha256": "e1517eb5d5f835e9a70cd6eacc10b1bd5601beb3e4a362eb85880419d6b01a79",
+      "date": "2026-09-29",
+      "kind": "coinm-klines-BTCUSD_PERP-1h",
+      "line_count": 25,
+      "url": "https://data.binance.vision/data/futures/cm/daily/klines/BTCUSD_PERP/1h/BTCUSD_PERP-1h-2026-09-29.zip",
+      "zip_path": "evidence/m0-m7-public-data/coinm-klines-BTCUSD_PERP-1h-2026-09-29.zip",
+      "zip_sha256": "fc3092f4afe993db1114f1d41b0756d8a7f711bb0543fa6fc74a19733554c0e4"
+    },
+    "derivatives_metrics": {
+      "binance_checksum_verified": true,
+      "csv_path": "evidence/m0-m7-public-data/coinm-metrics-BTCUSD_PERP-2026-09-29.csv",
+      "csv_sha256": "bfa06ba753cdd052f8bee8ee41236217dd5a1f4092a1fcb0cc49304deaf1f15c",
+      "date": "2026-09-29",
+      "kind": "coinm-metrics-BTCUSD_PERP",
+      "line_count": 289,
+      "url": "https://data.binance.vision/data/futures/cm/daily/metrics/BTCUSD_PERP/BTCUSD_PERP-metrics-2026-09-29.zip",
+      "zip_path": "evidence/m0-m7-public-data/coinm-metrics-BTCUSD_PERP-2026-09-29.zip",
+      "zip_sha256": "4ce18a329960aa052eea37774cd7f37cd6936b0b9d2406dfb5c1c9fe761bd871"
+    },
+    "onchain": {
+      "end_time": "2026-09-30",
+      "path": "evidence/m0-m7-public-data/coinmetrics-btc-onchain.json",
+      "row_count": 4,
+      "sha256": "b2ef7f94594d0f140230734b2ced59d2b75af63566542e9790b279cc2b17d507",
+      "start_time": "2026-09-26",
+      "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=AdrActCnt%2CTxCnt%2CFeeTotNtv&start_time=2026-09-26&end_time=2026-09-30&frequency=1d&page_size=10000&paging_from=start"
+    },
+    "spot_market": {
+      "binance_checksum_verified": true,
+      "csv_path": "evidence/m0-m7-public-data/spot-klines-BTCUSDT-1h-2026-09-29.csv",
+      "csv_sha256": "4db2be0a3875134a152ce4d148863bf25ffb42ad83a3d1ee752ae8eb9b5d46e6",
+      "date": "2026-09-29",
+      "kind": "spot-klines-BTCUSDT-1h",
+      "line_count": 24,
+      "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1h/BTCUSDT-1h-2026-09-29.zip",
+      "zip_path": "evidence/m0-m7-public-data/spot-klines-BTCUSDT-1h-2026-09-29.zip",
+      "zip_sha256": "4bdde925b8a9d1cf29416c30c2dd462a63a54854bdb6605e20be1d772f07bf15"
+    }
+  },
+  "workflow_ref": "jadeldiaz01-png/Institutional-Trading-Bot-Status/.github/workflows/m0-m7-public-data-acquisition.yml@refs/pull/48/merge",
+  "workflow_source_sha": "7eb74e7717929dbccd41a7b8489d31bcfa260d34"
+}
