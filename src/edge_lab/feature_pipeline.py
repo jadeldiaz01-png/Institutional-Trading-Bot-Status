@@ -375,6 +375,28 @@ def build_point_in_time_panel(
                     "target_close_time": _iso_from_ms(int(next_row["close_time_ms"])),
                 }
             )
+
+    # Standardize raw incremental information sets with past-only rolling history.
+    # This preserves point-in-time causality and prevents incompatible units from
+    # dominating the equal-weight score.
+    for feature in (
+        "cross_crypto_leadlag",
+        "oi_change_z",
+        "basis_z",
+        "taker_imbalance",
+        "onchain_activity_z",
+        "network_growth_z",
+    ):
+        by_asset: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in output:
+            by_asset[str(row["asset"])].append(row)
+        for rows in by_asset.values():
+            rows.sort(key=lambda item: int(item["decision_time_ms"]))
+            raw = [_float(item.get(feature)) for item in rows]
+            for idx, item in enumerate(rows):
+                item[feature] = _rolling_z(raw, idx)
+
+    output.sort(key=lambda item: (int(item["decision_time_ms"]), str(item["asset"])))
     return output
 
 
