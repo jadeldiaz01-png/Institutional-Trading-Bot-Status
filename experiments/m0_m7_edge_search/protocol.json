@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0.0",
+  "experiment_id": "M0_M7_EDGE_SEARCH_2026",
+  "mode": "RESEARCH_ONLY",
+  "authority": {
+    "edge_verified": false,
+    "holdout_access": "FORBIDDEN",
+    "paper_authorized": false,
+    "testnet_authorized": false,
+    "live_authorized": false
+  },
+  "walk_forward": {
+    "min_train_rows": 240,
+    "test_rows": 72,
+    "step_rows": 72,
+    "purge_rows": 1,
+    "embargo_rows": 1
+  },
+  "signal": {
+    "entry_threshold": 0.20,
+    "feature_clip_abs_z": 3.0
+  },
+  "cost_model": {
+    "taker_fee_bps": 4.0,
+    "maker_fee_bps": 2.0,
+    "default_half_spread_bps": 1.0,
+    "default_slippage_bps": 2.0,
+    "execution_style": "taker"
+  },
+  "annualization_periods": 8760,
+  "candidate_screen": {
+    "require_net_return_positive": true,
+    "require_simple_alpha_positive": true,
+    "require_positive_fold_fraction": 0.6,
+    "require_sharpe_positive": true
+  },
+  "feature_sets": {
+    "M0": ["momentum_1h", "momentum_4h", "momentum_1d"],
+    "M1": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag"],
+    "M2": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance"],
+    "M3": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance", "order_flow_imbalance", "book_imbalance", "microprice_edge"],
+    "M4": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance", "order_flow_imbalance", "book_imbalance", "microprice_edge", "onchain_activity_z", "exchange_netflow_z", "network_growth_z"],
+    "M5": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance", "order_flow_imbalance", "book_imbalance", "microprice_edge", "onchain_activity_z", "exchange_netflow_z", "network_growth_z", "sentiment_z", "news_novelty"],
+    "M6": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance", "order_flow_imbalance", "book_imbalance", "microprice_edge", "onchain_activity_z", "exchange_netflow_z", "network_growth_z", "sentiment_z", "news_novelty", "llm_event_score", "llm_event_confidence"],
+    "M7": ["momentum_1h", "momentum_4h", "momentum_1d", "cross_crypto_leadlag", "funding_z", "oi_change_z", "basis_z", "taker_imbalance", "order_flow_imbalance", "book_imbalance", "microprice_edge", "onchain_activity_z", "exchange_netflow_z", "network_growth_z", "sentiment_z", "news_novelty", "llm_event_score", "llm_event_confidence", "regime_trend", "regime_volatility"]
+  }
+}
