@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the research-only M0→M7 ablation on a point-in-time CSV."""
+"""Run the research-only M0→M7 ablation on a point-in-time CSV panel."""
 
 from __future__ import annotations
 
@@ -27,23 +27,27 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("input CSV is empty")
 
-    timestamps = [str(row.get("timestamp", "")) for row in rows]
-    if any(not ts for ts in timestamps):
-        raise ValueError("every row requires timestamp")
+    keys: list[tuple[str, str]] = []
+    timestamps: list[str] = []
+    for row in rows:
+        timestamp = str(row.get("timestamp", ""))
+        if not timestamp:
+            raise ValueError("every row requires timestamp")
+        asset = str(row.get("asset") or "__portfolio__")
+        keys.append((timestamp, asset))
+        timestamps.append(timestamp)
+
     if timestamps != sorted(timestamps):
-        raise ValueError("timestamps must be sorted ascending")
-    if len(set(timestamps)) != len(timestamps):
-        raise ValueError("timestamps must be unique; aggregate to one portfolio decision row per timestamp")
+        raise ValueError("rows must be sorted by timestamp ascending")
+    if len(set(keys)) != len(keys):
+        raise ValueError("timestamp/asset pairs must be unique")
     return rows
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
-    parser.add_argument(
-        "--protocol",
-        default="experiments/m0_m7_edge_search/protocol.json",
-    )
+    parser.add_argument("--protocol", default="experiments/m0_m7_edge_search/protocol.json")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -55,6 +59,8 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(f"M0_M7_REPORT={output}")
+    print(f"ASSET_COUNT={report['panel']['asset_count']}")
+    print(f"DECISION_TIMESTAMPS={report['panel']['decision_timestamps']}")
     print("EDGE_VERIFIED=false")
     print("LIVE_AUTHORIZED=false")
 
