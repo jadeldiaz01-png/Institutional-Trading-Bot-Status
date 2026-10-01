@@ -1,7 +1,7 @@
 {
   "EDGE_VERIFIED": false,
   "blocked_models": [],
-  "decision_timestamps": 23,
+  "decision_timestamps": 47,
   "eligible_models": [],
   "holdout_accessed": false,
   "live_authorized": false,
@@ -10,9 +10,9 @@
   "next_gate": "CONTINUE_AUTOMATIC_ACCUMULATION",
   "paper_authorized": false,
   "run_attempt": "1",
-  "run_id": "36784259712",
+  "run_id": "36846778985",
   "schema_version": "1.0.0",
   "status": "WAITING_FOR_PROSPECTIVE_DATA",
   "testnet_authorized": false,
-  "workflow_source_sha": "0d9e2877e6487b562da82cb1e04a1ff1a37e126b"
+  "workflow_source_sha": "eeb43b6e34d80b3aec3feca6ce381c14ea400639"
 }

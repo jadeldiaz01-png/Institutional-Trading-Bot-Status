@@ -19,61 +19,53 @@
     "target_strictly_after_decision": true
   },
   "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
-  "decision_timestamps": 23,
+  "decision_timestamps": 47,
   "feature_availability": {
     "M0": {
-      "complete_fraction": 0.0,
-      "complete_rows": 0,
-      "missing_features": [
-        "momentum_1d"
-      ],
-      "rows": 184
+      "complete_fraction": 0.2553191489361702,
+      "complete_rows": 96,
+      "missing_features": [],
+      "rows": 376
     },
     "M1": {
-      "complete_fraction": 0.0,
-      "complete_rows": 0,
-      "missing_features": [
-        "momentum_1d"
-      ],
-      "rows": 184
+      "complete_fraction": 0.2553191489361702,
+      "complete_rows": 96,
+      "missing_features": [],
+      "rows": 376
     },
     "M2": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z"
       ],
-      "rows": 184
+      "rows": 376
     },
     "M3": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z",
         "book_imbalance",
         "microprice_edge"
       ],
-      "rows": 184
+      "rows": 376
     },
     "M4": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z",
         "book_imbalance",
         "microprice_edge",
         "exchange_netflow_z"
       ],
-      "rows": 184
+      "rows": 376
     },
     "M5": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z",
         "book_imbalance",
         "microprice_edge",
@@ -81,13 +73,12 @@
         "sentiment_z",
         "news_novelty"
       ],
-      "rows": 184
+      "rows": 376
     },
     "M6": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z",
         "book_imbalance",
         "microprice_edge",
@@ -97,13 +88,12 @@
         "llm_event_score",
         "llm_event_confidence"
       ],
-      "rows": 184
+      "rows": 376
     },
     "M7": {
       "complete_fraction": 0.0,
       "complete_rows": 0,
       "missing_features": [
-        "momentum_1d",
         "funding_z",
         "book_imbalance",
         "microprice_edge",
@@ -111,11 +101,9 @@
         "sentiment_z",
         "news_novelty",
         "llm_event_score",
-        "llm_event_confidence",
-        "regime_trend",
-        "regime_volatility"
+        "llm_event_confidence"
       ],
-      "rows": 184
+      "rows": 376
     }
   },
   "history_ready_for_first_fold": false,

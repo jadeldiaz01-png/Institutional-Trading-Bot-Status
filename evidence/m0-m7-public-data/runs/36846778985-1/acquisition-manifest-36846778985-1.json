@@ -1,0 +1,131 @@
+{
+  "authority_contract_sha256": "50aa994c466ff22d171cd7b70df09a8383dfd0c5f6be38e2befceaa974f55c2a",
+  "authorized_origin_sha": "b30d39d75a73b6cd001e5f2f007283c05ca2c669",
+  "decision": "PUBLIC_DATA_ACQUISITION_PASS",
+  "event_name": "schedule",
+  "evidence_class": "M0_M7_PUBLIC_DATA_ACQUISITION",
+  "fetched_at": "2026-10-01T10:04:16.197604+00:00",
+  "implementation_base_sha": "c17aea029f96a1bc0db5133accd40634ec8ccd96",
+  "run_attempt": "1",
+  "run_id": "36846778985",
+  "safety": {
+    "EDGE_VERIFIED": false,
+    "account_accessed": false,
+    "credentials_used": false,
+    "holdout_accessed": false,
+    "live_authorized": false,
+    "orders_placed": false,
+    "paper_authorized": false,
+    "testnet_authorized": false
+  },
+  "schema_version": "2.0.0",
+  "sources": {
+    "derivatives_funding": {
+      "daily_archive_available": false,
+      "note": "No synthetic daily substitute was used.",
+      "status": "MONTHLY_ARCHIVE_ONLY"
+    },
+    "derivatives_klines": {
+      "binance_checksum_verified": true,
+      "csv_sha256": "5b0acc12dbbfee0d9c2129b464d8a098a802d16e3bbe28a023902adfa75352b0",
+      "date": "2026-09-30",
+      "kind": "coinm-klines-BTCUSD_PERP-1h",
+      "line_count": 25,
+      "url": "https://data.binance.vision/data/futures/cm/daily/klines/BTCUSD_PERP/1h/BTCUSD_PERP-1h-2026-09-30.zip",
+      "zip_sha256": "18c371cfb9125867dcb2a7e8ce31f4be54b89472c90342fd5bb912b7377da943"
+    },
+    "derivatives_metrics": {
+      "binance_checksum_verified": true,
+      "csv_sha256": "4980aaec08dc42a9bb3fc3690712dd455a274d3abe52592cf106ecbaa614a2c9",
+      "date": "2026-09-30",
+      "kind": "coinm-metrics-BTCUSD_PERP",
+      "line_count": 289,
+      "url": "https://data.binance.vision/data/futures/cm/daily/metrics/BTCUSD_PERP/BTCUSD_PERP-metrics-2026-09-30.zip",
+      "zip_sha256": "4a0bb499285718fc8afe89d1087f7025e9824be202ab78da15fff15aa3f5672c"
+    },
+    "onchain": {
+      "end_time": "2026-10-01",
+      "path": "run-evidence/coinmetrics-btc-onchain-2026-10-01.json",
+      "row_count": 4,
+      "sha256": "7e3c3c5b32d6265c033473c73d33bef9974f5331177e65f2be2811ba7636bf52",
+      "start_time": "2026-09-27",
+      "url": "https://community-api.coinmetrics.io/v4/timeseries/asset-metrics?assets=btc&metrics=AdrActCnt%2CTxCnt%2CFeeTotNtv&start_time=2026-09-27&end_time=2026-10-01&frequency=1d&page_size=10000&paging_from=start"
+    },
+    "spot_market": {
+      "ADAUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "8bed5935a56b872038126fd5259323dca84d71f61aafbd688162ef43892c8cd5",
+        "date": "2026-09-30",
+        "kind": "spot-klines-ADAUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/ADAUSDT/1h/ADAUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "84751efd4d7694d3c01101d74e2108508056351f70e335cd8861ec34cd445c0b"
+      },
+      "AVAXUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "b90bdae7955f7cf1e22fc0bd179751050eb7d10537efc6e72e747f0e79306b2a",
+        "date": "2026-09-30",
+        "kind": "spot-klines-AVAXUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/AVAXUSDT/1h/AVAXUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "97e3d2f8515a878d39707c2766309ad60626e6d82549b26ec0848e69b351c271"
+      },
+      "BNBUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "93d43b0760e9324c4eeb3faf15969990b93ef3031df1ab6d85a24990a4a0ff12",
+        "date": "2026-09-30",
+        "kind": "spot-klines-BNBUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/BNBUSDT/1h/BNBUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "e26ed576ccaa6bdfa44bba81f1a40aa97e290e3e6c761a7a09ca47bd78d2e056"
+      },
+      "BTCUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "614930e756a19d8fb4e5a69363a2d16ff214b8ef71632cd4c235507f5dad7dad",
+        "date": "2026-09-30",
+        "kind": "spot-klines-BTCUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1h/BTCUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "990d789fb99b8f7c794dd459805cfcb33098474f6693196cd06c5694228dc052"
+      },
+      "DOGEUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "a9a4a5cd91e9177f1d82b56b3c0f3932ea738498439bd14be87b0516a0989297",
+        "date": "2026-09-30",
+        "kind": "spot-klines-DOGEUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/DOGEUSDT/1h/DOGEUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "c0cb472be5024cda8ad55ae7b2055067297b247ed7f600bfbe24f0886f4cc614"
+      },
+      "ETHUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "bd4202635ba634b0c42e1f1d1c22930cd515165a3ae06fa5e0100ef78760b922",
+        "date": "2026-09-30",
+        "kind": "spot-klines-ETHUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/ETHUSDT/1h/ETHUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "0f262fc6406139869cf746f95a83df441d90fb532fde6c2a4c9959074658702c"
+      },
+      "SOLUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "9d4c9febf659681991bbdb24da6f3ca47d1efc89fd9dafb65c3527f41609b680",
+        "date": "2026-09-30",
+        "kind": "spot-klines-SOLUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/SOLUSDT/1h/SOLUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "d5d7e1a55d11e9f80ca59cecc2d602483ad9c066174545b00fd1f341d02f70c5"
+      },
+      "XRPUSDT": {
+        "binance_checksum_verified": true,
+        "csv_sha256": "a234632cd091ebe77ca2dac2fbdf18c5a63cae7f7b1e438b224c711d7a985e74",
+        "date": "2026-09-30",
+        "kind": "spot-klines-XRPUSDT-1h",
+        "line_count": 24,
+        "url": "https://data.binance.vision/data/spot/daily/klines/XRPUSDT/1h/XRPUSDT-1h-2026-09-30.zip",
+        "zip_sha256": "3c003f093a2876c7e66522a6ab32c22c53276534063134168b588f0cf4d715fa"
+      }
+    }
+  },
+  "workflow_ref": "jadeldiaz01-png/Institutional-Trading-Bot-Status/.github/workflows/m0-m7-public-data-acquisition.yml@refs/heads/main",
+  "workflow_source_sha": "eeb43b6e34d80b3aec3feca6ce381c14ea400639"
+}
