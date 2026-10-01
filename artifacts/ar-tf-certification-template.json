@@ -1,0 +1,23 @@
+{
+  "strategy_id": "AR-TF-v1",
+  "stage": "RESEARCH",
+  "dataset_manifest_sha256": null,
+  "code_commit_sha": null,
+  "experiment_registry": [],
+  "baselines": {},
+  "in_sample": {},
+  "out_of_sample": {},
+  "holdout": {},
+  "regime_breakdown": {},
+  "symbol_breakdown": {},
+  "cost_stress": {},
+  "bootstrap": {},
+  "monte_carlo": {},
+  "deflated_sharpe_probability": null,
+  "pbo": null,
+  "leakage_checks": [],
+  "data_quality_checks": [],
+  "decision": "NO_GO",
+  "reasons": ["EVIDENCE_NOT_YET_GENERATED"],
+  "paper_authorized": false
+}

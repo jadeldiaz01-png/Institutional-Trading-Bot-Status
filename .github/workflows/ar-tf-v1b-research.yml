@@ -1,0 +1,84 @@
+name: ar-tf-v1b-historical-research
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: Historical start date (UTC)
+        required: true
+        default: '2019-01-01'
+      end:
+        description: Historical end date (UTC, keep final year as frozen holdout)
+        required: true
+        default: '2026-08-31'
+      lifecycle_path:
+        description: Reviewed historical lifecycle CSV (not the example file)
+        required: true
+        default: 'config/ar_tf_universe_lifecycle.csv'
+
+permissions:
+  contents: read
+
+env:
+  LIVE_TRADING_ENABLED: 'false'
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Enforce research-only and reviewed universe
+        env:
+          LIFECYCLE_PATH: ${{ inputs.lifecycle_path }}
+        run: |
+          test "$LIVE_TRADING_ENABLED" = "false"
+          test "$LIFECYCLE_PATH" != "config/ar_tf_universe_lifecycle.example.csv"
+          test -f "$LIFECYCLE_PATH"
+      - name: Unit and causality tests
+        run: pytest -q
+      - name: Download public Binance historical data
+        env:
+          LIFECYCLE_PATH: ${{ inputs.lifecycle_path }}
+          START_DATE: ${{ inputs.start }}
+          END_DATE: ${{ inputs.end }}
+        run: |
+          python -m ar_tf.binance_download \
+            --lifecycle "$LIFECYCLE_PATH" \
+            --start "$START_DATE" \
+            --end "$END_DATE" \
+            --output-dir data/ar_tf_v1
+      - name: Execute walk-forward research
+        run: |
+          python -m ar_tf.research_runner \
+            --market-dir data/ar_tf_v1 \
+            --manifest data/ar_tf_v1/dataset-manifest.json \
+            --config config/ar_tf_v1.yaml \
+            --registry artifacts/experiments/ar_tf_v1.jsonl \
+            --output artifacts/ar-tf-v1b-research-report.json \
+            --code-ref "$GITHUB_SHA"
+      - name: Enforce no automatic PAPER authorization
+        run: |
+          python - <<'PY'
+          import json
+          p = 'artifacts/ar-tf-v1b-research-report.json'
+          d = json.load(open(p))
+          assert d['paper_authorized'] is False
+          assert d['decision'] in {'NO_GO', 'PAPER_CANDIDATE'}
+          assert d['holdout_frozen']['evaluated'] is False
+          print('historical research remains fail-closed:', d['decision'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ar-tf-v1b-evidence-${{ github.run_id }}
+          path: |
+            data/ar_tf_v1/dataset-manifest.json
+            artifacts/ar-tf-v1b-research-report.json
+            artifacts/experiments/ar_tf_v1.jsonl
+          if-no-files-found: error
+          retention-days: 30
