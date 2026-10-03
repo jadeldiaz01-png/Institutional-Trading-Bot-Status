@@ -1,0 +1,127 @@
+name: chatgpt-agent-control-plane
+
+on:
+  pull_request:
+    paths:
+      - '.agent/dispatch.json'
+      - '.github/workflows/chatgpt-agent-control-plane.yml'
+
+permissions:
+  contents: read
+
+env:
+  EXECUTION_ENABLED_BY_DEFAULT: 'false'
+  PAPER_AUTHORIZED: 'false'
+  TESTNET_AUTHORIZED: 'false'
+  LIVE_AUTHORIZED: 'false'
+
+concurrency:
+  group: chatgpt-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  authorize:
+    name: Validate ChatGPT execution request
+    runs-on: ubuntu-latest
+    outputs:
+      expected_sha: ${{ steps.request.outputs.expected_sha }}
+      agent: ${{ steps.request.outputs.agent }}
+      environment: ${{ steps.request.outputs.environment }}
+      request_id: ${{ steps.request.outputs.request_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - id: request
+        name: Parse and fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .agent/dispatch.json || { echo '::error::No dispatch request present.'; exit 1; }
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re
+          d=json.load(open('.agent/dispatch.json'))
+          required={'request_id','agent','environment','expected_sha','allow_live'}
+          missing=required-set(d)
+          if missing: raise SystemExit(f'missing fields: {sorted(missing)}')
+          if d['agent'] != 'dataset-certifier': raise SystemExit('agent not allowlisted')
+          if d['environment'] not in {'research','staging'}: raise SystemExit('environment not allowlisted')
+          if d['allow_live'] is not False: raise SystemExit('allow_live must be false')
+          sha=d['expected_sha']
+          if not isinstance(sha,str) or not re.fullmatch(r'[0-9a-f]{40}',sha): raise SystemExit('invalid expected_sha')
+          rid=d['request_id']
+          if not isinstance(rid,str) or not re.fullmatch(r'[A-Za-z0-9._:-]{8,128}',rid): raise SystemExit('invalid request_id')
+          print(f'expected_sha={sha}')
+          print(f'agent={d["agent"]}')
+          print(f'environment={d["environment"]}')
+          print(f'request_id={rid}')
+          PY
+          EXPECTED_SHA="$(python -c "import json;print(json.load(open('.agent/dispatch.json'))['expected_sha'])")"
+          git cat-file -e "${EXPECTED_SHA}^{commit}"
+          git merge-base --is-ancestor "$EXPECTED_SHA" "${{ github.event.pull_request.head.sha }}" || {
+            echo '::error::expected_sha is not an ancestor of the request commit.'
+            exit 1
+          }
+
+  execute:
+    name: Execute authorized dataset certifier
+    needs: authorize
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout exact authorized code SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.authorize.outputs.expected_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - name: Discover historical evidence
+        run: python -m ar_tf.evidence_runner --output-dir artifacts/ar_tf_v1d2 --timeout 60
+      - name: Reconcile, verify, and freeze dataset
+        env:
+          AR_TF_CODE_SHA: ${{ needs.authorize.outputs.expected_sha }}
+        run: python -m ar_tf.dataset_certifier --evidence-dir artifacts/ar_tf_v1d2 --output-dir artifacts/ar_tf_v1d2_dataset --workers 16 --timeout 60
+      - name: Enforce evidence gates
+        env:
+          EXPECTED_SHA: ${{ needs.authorize.outputs.expected_sha }}
+          REQUEST_ID: ${{ needs.authorize.outputs.request_id }}
+          REQUEST_ENVIRONMENT: ${{ needs.authorize.outputs.environment }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path('artifacts/ar_tf_v1d2_dataset')
+          c=json.load(open(root/'dataset-freeze-certificate.json'))
+          r=json.load(open(root/'reconciliation-ledger.json'))
+          g=json.load(open(root/'gap-report.json'))
+          q=json.load(open(root/'checksum-report.json'))
+          assert c['decision']=='FROZEN_DATASET'
+          assert c['frozen'] is True
+          assert c['unresolved_count']==0
+          assert c['unresolved_gap_count']==0
+          assert c['invalid_checksum_evidence_count']==0
+          assert c['code_sha']==os.environ['EXPECTED_SHA']
+          assert c['paper_authorized'] is False
+          assert c['testnet_authorized'] is False
+          assert c['live_authorized'] is False
+          assert r['unresolved_count']==0
+          assert g['unresolved_gap_count']==0
+          assert q['all_source_checksums_verified'] is True
+          out={'request_id':os.environ['REQUEST_ID'],'environment':os.environ['REQUEST_ENVIRONMENT'],'expected_sha':os.environ['EXPECTED_SHA'],'decision':c['decision'],'dataset_sha256':c['dataset_sha256'],'unresolved_count':c['unresolved_count'],'paper_authorized':False,'testnet_authorized':False,'live_authorized':False}
+          Path('artifacts/chatgpt-agent-result.json').write_text(json.dumps(out,indent=2)+'\n')
+          print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chatgpt-agent-${{ needs.authorize.outputs.request_id }}
+          path: |
+            artifacts/ar_tf_v1d2/
+            artifacts/ar_tf_v1d2_dataset/
+            artifacts/chatgpt-agent-result.json
+          if-no-files-found: error
