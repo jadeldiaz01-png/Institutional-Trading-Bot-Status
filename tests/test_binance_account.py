@@ -55,6 +55,7 @@ class BinanceAccountTests(unittest.TestCase):
     def test_permission_policy_denies_privilege_drift(self):
         policy = PermissionPolicy.read_only()
         safe = {
+            "ipRestrict": True,
             "enableReading": True,
             "enableSpotAndMarginTrading": False,
             "enableWithdrawals": False,
@@ -64,6 +65,7 @@ class BinanceAccountTests(unittest.TestCase):
             "enableFutures": False,
             "enableVanillaOptions": False,
             "enablePortfolioMarginTrading": False,
+            "enableFixApiTrade": False,
         }
         decision = policy.evaluate_payload(safe)
         self.assertTrue(decision.allowed)
@@ -77,6 +79,7 @@ class BinanceAccountTests(unittest.TestCase):
             "enableFutures",
             "enableVanillaOptions",
             "enablePortfolioMarginTrading",
+            "enableFixApiTrade",
         ):
             drifted = dict(safe)
             drifted[key] = True
@@ -88,6 +91,24 @@ class BinanceAccountTests(unittest.TestCase):
         denied = PermissionPolicy.read_only().evaluate_payload({"enableReading": False})
         self.assertFalse(denied.allowed)
         self.assertIn("enableReading", " ".join(denied.reasons))
+
+    def test_permission_policy_denies_missing_ip_restriction(self):
+        safe = {
+            "ipRestrict": False,
+            "enableReading": True,
+            "enableSpotAndMarginTrading": False,
+            "enableWithdrawals": False,
+            "enableInternalTransfer": False,
+            "permitsUniversalTransfer": False,
+            "enableMargin": False,
+            "enableFutures": False,
+            "enableVanillaOptions": False,
+            "enablePortfolioMarginTrading": False,
+            "enableFixApiTrade": False,
+        }
+        denied = PermissionPolicy.read_only().evaluate_payload(safe)
+        self.assertFalse(denied.allowed)
+        self.assertIn("ipRestrict", " ".join(denied.reasons))
 
     @patch("binance_mcp.binance_account.urlopen")
     def test_account_client_uses_file_backed_credentials_and_read_only_endpoints(self, urlopen):
