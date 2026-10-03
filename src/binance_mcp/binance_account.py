@@ -36,7 +36,7 @@ class PermissionPolicy:
     @classmethod
     def read_only(cls) -> "PermissionPolicy":
         return cls(
-            required_true=("ipRestrict", "enableReading"),
+            required_true=("enableReading",),
             required_false=(
                 "enableSpotAndMarginTrading",
                 "enableWithdrawals",
