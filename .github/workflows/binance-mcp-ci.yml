@@ -1,0 +1,54 @@
+name: Binance MCP branch CI
+
+on:
+  pull_request:
+    paths:
+      - 'src/binance_mcp/**'
+      - 'tests/test_binance*.py'
+      - 'tests/test_nemotron.py'
+      - 'tests/test_decision_ensemble.py'
+      - 'tests/test_order_approval.py'
+      - 'tests/test_oms_reconciliation.py'
+      - 'tests/test_user_stream.py'
+      - 'tests/test_trading_telemetry.py'
+      - 'tests/test_kill_switch.py'
+      - 'tests/test_binance_mcp_certifier.py'
+      - 'scripts/certify_binance_mcp.py'
+      - '.github/workflows/binance-mcp-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binance-mcp-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Compile
+        run: |
+          set -euo pipefail
+          test ! -d src/binance_mcp || python3 -m compileall -q src/binance_mcp
+          python3 -m compileall -q tests
+      - name: Run unit tests
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_binance*.py' -v
+          test ! -f tests/test_nemotron.py || python3 -m unittest tests.test_nemotron -v
+          test ! -f tests/test_decision_ensemble.py || python3 -m unittest tests.test_decision_ensemble -v
+          test ! -f tests/test_order_approval.py || python3 -m unittest tests.test_order_approval -v
+          test ! -f tests/test_oms_reconciliation.py || python3 -m unittest tests.test_oms_reconciliation -v
+          test ! -f tests/test_user_stream.py || python3 -m unittest tests.test_user_stream -v
+          test ! -f tests/test_trading_telemetry.py || python3 -m unittest tests.test_trading_telemetry -v
+          test ! -f tests/test_kill_switch.py || python3 -m unittest tests.test_kill_switch -v
+          test ! -f tests/test_binance_mcp_certifier.py || python3 -m unittest tests.test_binance_mcp_certifier -v

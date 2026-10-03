@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "profiles": {
+    "READ": {
+      "require_true": [
+        "ipRestrict",
+        "enableReading"
+      ],
+      "require_false": [
+        "enableSpotAndMarginTrading",
+        "enableWithdrawals",
+        "enableInternalTransfer",
+        "permitsUniversalTransfer",
+        "enableMargin",
+        "enableFutures",
+        "enableVanillaOptions",
+        "enablePortfolioMarginTrading",
+        "enableFixApiTrade"
+      ]
+    }
+  }
+}

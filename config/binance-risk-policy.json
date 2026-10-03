@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "authority": "BLOCKED_UNTIL_EXPLICIT_LIMITS",
+  "max_order_notional": null,
+  "max_spread_bps": null,
+  "max_slippage_bps": null,
+  "max_concentration_pct": null,
+  "max_daily_loss": null,
+  "max_strategy_drawdown_pct": null,
+  "max_simultaneous_positions": null,
+  "min_cash_reserve": null
+}

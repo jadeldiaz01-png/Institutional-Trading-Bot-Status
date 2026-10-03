@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "execution_enabled_by_default": false,
+  "kill_switch_fail_closed": true,
+  "permission_drift": "DENY",
+  "unresolved_unknown": "DENY",
+  "telemetry_unhealthy": "DENY",
+  "policy_unhealthy": "DENY",
+  "secret_provider_unhealthy": "DENY",
+  "global_halt_default": false,
+  "withdrawals_supported": false,
+  "transfers_supported": false,
+  "margin_supported": false,
+  "futures_supported": false,
+  "options_supported": false
+}

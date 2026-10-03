@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "provider": "nvidia",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b",
+  "base_url": "https://integrate.api.nvidia.com/v1",
+  "endpoint": "/chat/completions",
+  "stream": false,
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "temperature": 0.1,
+  "top_p": 0.95,
+  "max_tokens": 2048,
+  "authority": "ADVISORY_ONLY",
+  "output_contract": "ModelDecision",
+  "persist_private_reasoning": false
+}
