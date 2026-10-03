@@ -1,0 +1,117 @@
+name: Binance MCP exact-SHA testnet certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact lowercase 40-hex main SHA to certify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: binance-mcp-testnet-certify
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact trusted revision
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Enforce exact main SHA
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          actual="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          test "$actual" = "$EXPECTED_SHA"
+          echo "BINANCE_MCP_EXACT_SHA=PASS"
+
+      - name: Compile and run governed unit suite
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q src/binance_mcp scripts/certify_binance_mcp.py tests
+          python3 -m unittest discover -s tests -p 'test_binance*.py' -v
+          python3 -m unittest tests.test_nemotron -v
+          python3 -m unittest tests.test_decision_ensemble -v
+          python3 -m unittest tests.test_order_approval -v
+          python3 -m unittest tests.test_oms_reconciliation -v
+          python3 -m unittest tests.test_user_stream -v
+          python3 -m unittest tests.test_trading_telemetry -v
+          python3 -m unittest tests.test_kill_switch -v
+          echo "BINANCE_MCP_TESTS=PASS"
+
+      - name: Scan production capability surface
+        run: |
+          set -euo pipefail
+          python3 scripts/certify_binance_mcp.py scan-forbidden             --root src/binance_mcp             --output forbidden-capabilities.json
+          echo "BINANCE_MCP_FORBIDDEN_CAPABILITIES=PASS"
+
+      - name: Build source SBOM
+        run: |
+          set -euo pipefail
+          python3 scripts/certify_binance_mcp.py emit-sbom             --root .             --output binance-mcp-sbom.cdx.json
+          test "$(python3 -c 'import json; print(json.load(open("binance-mcp-sbom.cdx.json"))["bomFormat"])')" = "CycloneDX"
+          echo "BINANCE_MCP_SBOM=PASS"
+
+      - name: Static security invariants
+        run: |
+          set -euo pipefail
+          ! grep -R -n -E 'shell[[:space:]]*=[[:space:]]*True|\beval\(|\bexec\(' src/binance_mcp scripts/binance_mcp_cli.py
+          ! grep -R -n -E 'AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|Bearer[[:space:]]+[A-Za-z0-9._-]{20,}' src/binance_mcp config scripts/binance_mcp_cli.py
+          echo "BINANCE_MCP_SECURITY=PASS"
+
+      - name: Build certification evidence
+        id: certification
+        continue-on-error: true
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          provenance_ref="github-actions:${GITHUB_WORKFLOW_REF}:run:${GITHUB_RUN_ID}:attempt:${GITHUB_RUN_ATTEMPT}"
+          python3 scripts/certify_binance_mcp.py certify             --source-sha "$EXPECTED_SHA"             --tests PASS             --security PASS             --forbidden-capabilities PASS             --permission-policy PASS             --reconciliation PASS             --risk-policy config/binance-risk-policy.json             --model-config config/nemotron-production.json             --runtime-policy config/binance-runtime-policy.json             --sbom-ref artifact:binance-mcp-sbom.cdx.json             --provenance-ref "$provenance_ref"             --output binance-mcp-certification.json
+
+      - name: Seal evidence checksums
+        if: always()
+        run: |
+          set -euo pipefail
+          test -f binance-mcp-certification.json
+          sha256sum             binance-mcp-certification.json             binance-mcp-sbom.cdx.json             forbidden-capabilities.json             > BINANCE_MCP_SHA256SUMS
+          sha256sum -c BINANCE_MCP_SHA256SUMS
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: binance-mcp-testnet-certification-${{ inputs.expected_sha }}
+          path: |
+            binance-mcp-certification.json
+            binance-mcp-sbom.cdx.json
+            forbidden-capabilities.json
+            BINANCE_MCP_SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Adjudicate certification
+        if: always()
+        run: |
+          set -euo pipefail
+          test "${{ steps.certification.outcome }}" = "success"
+          test "$(python3 -c 'import json; print(json.load(open("binance-mcp-certification.json"))["decision"])')" = "PASS"
+          echo "BINANCE_MCP_TESTNET_CERTIFICATION=PASS"
