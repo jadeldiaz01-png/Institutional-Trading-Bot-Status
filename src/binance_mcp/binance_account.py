@@ -46,7 +46,6 @@ class PermissionPolicy:
                 "enableFutures",
                 "enableVanillaOptions",
                 "enablePortfolioMarginTrading",
-                "enableFixApiTrade",
             ),
         )
 
