@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "workstream_id": "BINANCE-MCP",
+  "target_stage": "TESTNET",
+  "status": "BLOCKED",
+  "blocking_reason": "RISK_LIMITS_NOT_CONFIGURED",
+  "required_gates": [
+    "tests",
+    "security",
+    "forbidden_capabilities",
+    "permission_policy",
+    "reconciliation",
+    "risk_policy_complete",
+    "sbom",
+    "provenance"
+  ],
+  "live_authorized": false,
+  "withdrawals_authorized": false,
+  "transfers_authorized": false
+}
