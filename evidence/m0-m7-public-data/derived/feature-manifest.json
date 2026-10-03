@@ -18,10 +18,10 @@
     "target_strictly_after_decision": true
   },
   "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
-  "decision_timestamps": 71,
+  "decision_timestamps": 95,
   "mode": "RESEARCH_ONLY",
   "panel_path": "/tmp/m0m7-derived/point_in_time_panel.csv",
-  "panel_sha256": "56f94166ebcaf37201023a26036fc6d363b1c8d6d97c4581ea358ad00c1273c2",
+  "panel_sha256": "f28ca054adfa1add50ccd4adfcceec7833b1b6e62c18b67122d1ee1748870c83",
   "point_in_time_contract": {
     "decision_timestamp": "source bar close time",
     "feature_cutoff": "source_event_time <= decision_timestamp",
@@ -30,8 +30,8 @@
     "onchain_availability": "daily metric usable no earlier than metric_day_plus_1d"
   },
   "readiness_path": "/tmp/m0m7-derived/readiness.json",
-  "readiness_sha256": "27dddb84eeee8d5f786d953fe5bbd9a37294a76b539c4f72bdf0757f171344e9",
-  "row_count": 568,
+  "readiness_sha256": "10d51eaa1836c444242e63da451d668ba9be99e0e9de75641109c652a12837f3",
+  "row_count": 760,
   "safety": {
     "EDGE_VERIFIED": false,
     "holdout_accessed": false,

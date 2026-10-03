@@ -19,19 +19,19 @@
     "target_strictly_after_decision": true
   },
   "decision": "ACCUMULATE_MORE_PROSPECTIVE_DATA",
-  "decision_timestamps": 71,
+  "decision_timestamps": 95,
   "feature_availability": {
     "M0": {
-      "complete_fraction": 0.5070422535211268,
-      "complete_rows": 288,
+      "complete_fraction": 0.631578947368421,
+      "complete_rows": 480,
       "missing_features": [],
-      "rows": 568
+      "rows": 760
     },
     "M1": {
-      "complete_fraction": 0.5070422535211268,
-      "complete_rows": 288,
+      "complete_fraction": 0.631578947368421,
+      "complete_rows": 480,
       "missing_features": [],
-      "rows": 568
+      "rows": 760
     },
     "M2": {
       "complete_fraction": 0.0,
@@ -39,7 +39,7 @@
       "missing_features": [
         "funding_z"
       ],
-      "rows": 568
+      "rows": 760
     },
     "M3": {
       "complete_fraction": 0.0,
@@ -49,7 +49,7 @@
         "book_imbalance",
         "microprice_edge"
       ],
-      "rows": 568
+      "rows": 760
     },
     "M4": {
       "complete_fraction": 0.0,
@@ -60,7 +60,7 @@
         "microprice_edge",
         "exchange_netflow_z"
       ],
-      "rows": 568
+      "rows": 760
     },
     "M5": {
       "complete_fraction": 0.0,
@@ -73,7 +73,7 @@
         "sentiment_z",
         "news_novelty"
       ],
-      "rows": 568
+      "rows": 760
     },
     "M6": {
       "complete_fraction": 0.0,
@@ -88,7 +88,7 @@
         "llm_event_score",
         "llm_event_confidence"
       ],
-      "rows": 568
+      "rows": 760
     },
     "M7": {
       "complete_fraction": 0.0,
@@ -103,7 +103,7 @@
         "llm_event_score",
         "llm_event_confidence"
       ],
-      "rows": 568
+      "rows": 760
     }
   },
   "history_ready_for_first_fold": false,
